@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jarvis · PR Work Tracker</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='40' fill='none' stroke='%2338bdf8' stroke-width='10'/><circle cx='50' cy='50' r='14' fill='%2338bdf8'/></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <div>
+        <div class="brand-name">JARVIS</div>
+        <div class="brand-sub" id="today-label"></div>
+      </div>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-view="today" class="active">Today</button>
+      <button role="tab" data-view="log">Log</button>
+      <button role="tab" data-view="todos">To-Do <span class="badge" id="todo-badge" hidden></span></button>
+      <button role="tab" data-view="dashboard">Dashboard</button>
+      <button role="tab" data-view="settings">Settings</button>
+    </nav>
+    <div class="sync-pill" id="sync-pill" title="Google Sheet sync status"></div>
+  </header>
+
+  <main>
+    <!-- ============================== TODAY -->
+    <section class="view active" id="view-today">
+      <div class="today-grid">
+        <div class="panel jarvis-panel">
+          <div class="jarvis-head">
+            <button class="mic" id="mic-btn" title="Talk to Jarvis (⌘J)" aria-label="Talk to Jarvis">
+              <span class="mic-ring"></span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg>
+            </button>
+            <div>
+              <div class="jarvis-status" id="jarvis-status">Click the mic or press <kbd>⌘J</kbd> and speak</div>
+              <div class="interim" id="interim"></div>
+            </div>
+          </div>
+          <div class="chat" id="chat" aria-live="polite"></div>
+          <form class="ask" id="ask-form" autocomplete="off">
+            <input id="ask-input" placeholder='Type a command, e.g. "log 30 min pitching Axios on Spring Launch"'>
+            <button class="btn primary" type="submit">Send</button>
+          </form>
+          <div class="chips" id="chips">
+            <button data-say="morning brief">☀️ Morning brief</button>
+            <button data-say="what's on my list">✅ My to-dos</button>
+            <button data-say="how many hours this week">⏱ Hours this week</button>
+            <button data-say="weekly report">📄 Weekly report</button>
+            <button data-say="wrap up my day">🌙 Wrap up</button>
+            <button data-say="help">❔ Help</button>
+          </div>
+        </div>
+
+        <div class="side">
+          <div class="panel timer-panel" id="timer-panel"></div>
+
+          <div class="panel">
+            <div class="panel-head"><h2>Today</h2><span class="muted" id="today-hours"></span></div>
+            <ul class="entry-list" id="today-entries"></ul>
+            <button class="btn ghost full" id="quick-log-btn">+ Log work manually</button>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head"><h2>To-dos</h2><button class="link" data-goto="todos">See all</button></div>
+            <form class="inline-add" id="quick-todo">
+              <input placeholder="Add a to-do… (try “call venue Friday urgent”)" id="quick-todo-input">
+            </form>
+            <ul class="todo-list compact" id="today-todos"></ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================== LOG -->
+    <section class="view" id="view-log">
+      <div class="panel">
+        <div class="toolbar">
+          <h2>Daily Log</h2>
+          <div class="filters">
+            <select id="log-period">
+              <option value="this week">This week</option>
+              <option value="today">Today</option>
+              <option value="yesterday">Yesterday</option>
+              <option value="last week">Last week</option>
+              <option value="this month">This month</option>
+              <option value="last month">Last month</option>
+              <option value="all time">All time</option>
+            </select>
+            <select id="log-project"><option value="">All projects</option></select>
+            <select id="log-category"><option value="">All categories</option></select>
+            <input id="log-search" placeholder="Search…">
+          </div>
+          <div class="toolbar-actions">
+            <button class="btn ghost" id="export-csv">Export CSV</button>
+            <button class="btn primary" id="log-new">+ New entry</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="log-table">
+            <thead><tr><th>Date</th><th>Project</th><th>Task</th><th>Work Done</th><th>Category</th><th class="num">Hrs</th><th>Notes / Next Steps</th><th></th></tr></thead>
+            <tbody id="log-body"></tbody>
+            <tfoot><tr><td colspan="5">Total</td><td class="num" id="log-total"></td><td colspan="2"></td></tr></tfoot>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================== TODOS -->
+    <section class="view" id="view-todos">
+      <div class="panel">
+        <div class="toolbar">
+          <h2>To-Do List</h2>
+          <form class="todo-add-form" id="todo-form">
+            <input id="todo-text" placeholder="What needs doing?" required>
+            <select id="todo-project"><option value="">No project</option></select>
+            <input type="date" id="todo-due">
+            <select id="todo-priority"><option value="normal">Normal</option><option value="high">High</option><option value="low">Low</option></select>
+            <button class="btn primary">Add</button>
+          </form>
+        </div>
+        <div class="todo-columns" id="todo-columns"></div>
+        <details class="done-wrap">
+          <summary>Completed <span id="done-count"></span></summary>
+          <ul class="todo-list" id="todo-done"></ul>
+        </details>
+      </div>
+    </section>
+
+    <!-- ============================== DASHBOARD -->
+    <section class="view" id="view-dashboard">
+      <div class="stat-row" id="stat-row"></div>
+      <div class="dash-grid">
+        <div class="panel"><div class="panel-head"><h2>This week by day</h2></div><div id="chart-days" class="chart"></div></div>
+        <div class="panel"><div class="panel-head"><h2>Hours by category</h2><select class="mini" id="cat-scope"><option value="week">This week</option><option value="all">All time</option></select></div><div id="chart-cats" class="chart"></div></div>
+        <div class="panel"><div class="panel-head"><h2>Hours by project</h2><select class="mini" id="proj-scope"><option value="week">This week</option><option value="all">All time</option></select></div><div id="chart-projects" class="chart"></div></div>
+        <div class="panel"><div class="panel-head"><h2>Report</h2>
+          <div class="filters">
+            <select class="mini" id="report-period"><option value="this week">This week</option><option value="last week">Last week</option><option value="this month">This month</option><option value="last month">Last month</option><option value="today">Today</option></select>
+            <select class="mini" id="report-project"><option value="">All projects</option></select>
+          </div></div>
+          <pre class="report" id="report-text"></pre>
+          <button class="btn ghost" id="report-copy">Copy report</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================== SETTINGS -->
+    <section class="view" id="view-settings">
+      <form id="settings-form" class="settings">
+        <div class="panel">
+          <h2>You</h2>
+          <label>Your first name (Jarvis greets you with it)<input name="userName"></label>
+        </div>
+
+        <div class="panel">
+          <h2>Projects &amp; clients</h2>
+          <p class="muted">One per line. Jarvis matches these when you speak. A distinctive word is enough, so “Acme” finds “Acme Corp Rebrand”.</p>
+          <textarea name="projects" rows="8"></textarea>
+        </div>
+
+        <div class="panel">
+          <h2>Categories &amp; keywords</h2>
+          <p class="muted">Jarvis picks a category from keywords in what you say. Format: <code>Category: keyword, keyword, …</code></p>
+          <textarea name="keywords" rows="13" class="mono"></textarea>
+          <label>Default category when nothing matches
+            <select name="defaultCategory"></select></label>
+        </div>
+
+        <div class="panel">
+          <h2>Jarvis behavior</h2>
+          <label class="check"><input type="checkbox" name="speakReplies"> Speak replies out loud</label>
+          <label>Voice <select name="voiceName"></select> <button type="button" class="btn ghost small" id="voice-test">Test</button></label>
+          <label class="check"><input type="checkbox" name="autoBrief"> Show the morning brief when I first open Jarvis each day</label>
+          <label class="check"><input type="checkbox" name="notesToTodos"> Turn “Notes / Next Steps” into to-dos automatically</label>
+          <label class="check"><input type="checkbox" name="autoSaveVoiceLogs"> Save voice logs without asking me to confirm</label>
+          <label>Check-in reminder: ask me what I've done if nothing is logged for
+            <select name="checkInMinutes">
+              <option value="0">Off</option><option value="60">1 hour</option><option value="90">1.5 hours</option><option value="120">2 hours</option><option value="180">3 hours</option>
+            </select></label>
+          <div class="row">
+            <label>Workday starts <input type="time" name="workStart"></label>
+            <label>Workday ends <input type="time" name="workEnd"></label>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Google Sheet sync</h2>
+          <ol class="steps">
+            <li>Open your <b>PR Daily Work Tracker</b> sheet → <b>Extensions → Apps Script</b>.</li>
+            <li>Delete what's there, then paste the script. <button type="button" class="btn ghost small" id="copy-script">Copy script</button></li>
+            <li>Click <b>Deploy → New deployment</b> → type <b>Web app</b>. Set <i>Execute as</i>: <b>Me</b>, <i>Who has access</i>: <b>Anyone</b>. Click Deploy and allow access.</li>
+            <li>Copy the <b>Web app URL</b> and paste it below, then click Save and <b>Test connection</b>.</li>
+          </ol>
+          <label>Web app URL <input name="sheetUrl" placeholder="https://script.google.com/macros/s/…/exec"></label>
+          <div class="row">
+            <button type="button" class="btn ghost" id="sync-test">Test connection</button>
+            <button type="button" class="btn ghost" id="sync-all">Re-sync everything</button>
+            <span class="muted" id="sync-msg"></span>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Your data</h2>
+          <p class="muted">Everything is stored on this Mac in <code>pr-jarvis/data/db.json</code>, with automatic daily backups in <code>data/backups</code>.</p>
+          <a class="btn ghost" href="/api/backup">Download a backup</a>
+        </div>
+
+        <div class="save-bar"><button class="btn primary" type="submit">Save settings</button><span id="settings-msg" class="muted"></span></div>
+      </form>
+    </section>
+  </main>
+
+  <!-- Entry editor -->
+  <dialog id="entry-dialog">
+    <form method="dialog" id="entry-form" class="entry-form">
+      <h2 id="entry-dialog-title">Log work</h2>
+      <div class="grid2">
+        <label>Date<input type="date" name="date" required></label>
+        <label>Time spent (hrs)<input type="number" name="hours" step="0.05" min="0" max="24" required></label>
+      </div>
+      <label>Project<input name="project" list="project-options"></label>
+      <label>Task<input name="task"></label>
+      <label>Work done<textarea name="workDone" rows="3"></textarea></label>
+      <label>Category<select name="category"></select></label>
+      <label>Notes / next steps<textarea name="notes" rows="2"></textarea></label>
+      <div class="dialog-actions">
+        <button type="button" class="btn danger ghost" id="entry-delete" hidden>Delete</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn ghost" value="cancel" id="entry-cancel">Cancel</button>
+        <button class="btn primary" value="save">Save</button>
+      </div>
+    </form>
+  </dialog>
+  <datalist id="project-options"></datalist>
+
+  <div class="toast" id="toast" role="status"></div>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>
