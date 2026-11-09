@@ -169,7 +169,7 @@ export class Jarvis {
           return say("There's no timer running. To log time, say something like 'log 30 minutes drafting the release'.");
         }
         const e = await this.actions.stopTimer(cmd.note);
-        return say(`Stopped. Logged ${this.describeEntry(e)}.`);
+        return say(`Stopped. Logged ${this.describeEntry(e)}.`, { saved: true });
       }
 
       case 'timer_cancel': {
@@ -216,6 +216,6 @@ export class Jarvis {
   async completeTodo(td) {
     await this.actions.updateTodo(td.id, { done: true, doneAt: new Date().toISOString() });
     this.pending = { type: 'todoDoneLog', todo: td };
-    return say(`Checked off "${td.text}". Want to log time for it? Just say how long, like "30 minutes", or say no.`);
+    return say(`Checked off "${td.text}". Want to log time for it? Just say how long, like "30 minutes", or say no.`, { celebrate: true });
   }
 }

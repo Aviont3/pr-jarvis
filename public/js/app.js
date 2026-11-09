@@ -40,6 +40,57 @@ const actions = {
 
 const jarvis = new Jarvis(() => state, actions);
 
+// ------------------------------------------------------------------ spring delight: petals & flower confetti
+
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function startPetals() {
+  if (reduceMotion) return;
+  const box = $('#petals');
+  const kinds = ['🌸', '🌸', '🌼', '🍃', '🌸', '💮'];
+  for (let i = 0; i < 14; i++) {
+    const p = document.createElement('span');
+    p.className = 'petal';
+    p.textContent = kinds[i % kinds.length];
+    p.style.left = `${Math.random() * 100}vw`;
+    p.style.fontSize = `${12 + Math.random() * 14}px`;
+    p.style.animationDuration = `${14 + Math.random() * 16}s`;
+    p.style.animationDelay = `${-Math.random() * 30}s`;
+    box.append(p);
+  }
+}
+
+/** A little burst of flowers from a point (or the center of an element). */
+function celebrate(from) {
+  if (reduceMotion) return;
+  let x = window.innerWidth / 2;
+  let y = window.innerHeight / 2;
+  if (from?.getBoundingClientRect) {
+    const r = from.getBoundingClientRect();
+    x = r.left + r.width / 2;
+    y = r.top + r.height / 2;
+  }
+  const bits = ['🌸', '🌼', '🌷', '✨', '🌿', '💐', '🦋'];
+  for (let i = 0; i < 16; i++) {
+    const s = document.createElement('span');
+    s.className = 'burst';
+    s.textContent = bits[i % bits.length];
+    s.style.left = `${x}px`;
+    s.style.top = `${y}px`;
+    document.body.append(s);
+    const angle = (Math.PI * 2 * i) / 16 + Math.random() * 0.4;
+    const dist = 60 + Math.random() * 90;
+    s.animate([
+      { transform: 'translate(-50%, -50%) scale(.4)', opacity: 1 },
+      { transform: `translate(calc(-50% + ${Math.cos(angle) * dist}px), calc(-50% + ${Math.sin(angle) * dist - 30}px)) scale(1.1) rotate(${Math.random() * 180 - 90}deg)`, opacity: 1, offset: 0.6 },
+      { transform: `translate(calc(-50% + ${Math.cos(angle) * dist * 1.1}px), calc(-50% + ${Math.sin(angle) * dist + 60}px)) scale(.8)`, opacity: 0 },
+    ], { duration: 1100 + Math.random() * 400, easing: 'cubic-bezier(.2,.8,.3,1)' }).onfinish = () => s.remove();
+  }
+}
+
+const CHEERS = ['Blooming nicely! 🌷', 'Look at you grow! 🌱', 'Fresh progress! 🌼', 'Another petal on the board! 🌸', 'Sunny work! ☀️'];
+const cheer = () => CHEERS[Math.floor(Math.random() * CHEERS.length)];
+
 function toast(msg) {
   const t = $('#toast');
   t.textContent = msg;
@@ -57,7 +108,7 @@ const voice = new Voice({
     const mic = $('#mic-btn');
     mic.classList.toggle('listening', s === 'listening');
     mic.classList.toggle('speaking', s === 'speaking');
-    $('#jarvis-status').innerHTML = s === 'listening' ? 'Listening…' : s === 'speaking' ? 'Speaking… <span class="muted">(Esc to stop)</span>' : 'Click the mic or press <kbd>⌘J</kbd> and speak';
+    $('#jarvis-status').innerHTML = s === 'listening' ? 'Listening…' : s === 'speaking' ? 'Speaking… <span class="muted">(Esc to stop)</span>' : 'Tap the flower or press <kbd>⌘J</kbd> and talk to me 🌼';
   },
   onError: (m) => jarvisSay({ speech: m }, false),
 });
@@ -139,6 +190,7 @@ function jarvisSay(res, speak = true) {
   if (res.card?.kind === 'entry') el.append(entryCard(res.card.entry));
   if (res.card?.kind === 'report') el.append(reportCard(res.card.text));
   $('#chat').append(el);
+  if (res.saved || res.celebrate) { celebrate(el); if (res.saved) toast(cheer()); }
   retireStaleCards();
   scrollChat();
   if (speak && state.settings.speakReplies) voice.speak(res.speech);
@@ -198,7 +250,7 @@ function renderTimer() {
     const tick = () => { const c = $('#clock'); if (c) c.textContent = fmtClock(Date.now() - new Date(t.startedAt)); };
     tick();
     timerTick = setInterval(tick, 1000);
-    $('#timer-stop').onclick = async () => { const e = await actions.stopTimer(''); jarvisSay({ speech: `Stopped. Logged ${fmtHours(e.hours)} on ${e.task}.` }); };
+    $('#timer-stop').onclick = async () => { const e = await actions.stopTimer(''); jarvisSay({ speech: `Stopped. Logged ${fmtHours(e.hours)} on ${e.task}.`, saved: true }); };
     $('#timer-cancel').onclick = async () => { if (confirm('Discard this timer without logging?')) await actions.cancelTimer(); };
   } else {
     el.className = 'panel timer-panel idle';
@@ -321,7 +373,7 @@ function renderDashboard() {
         ${d.hours ? `<span class="v">${fmtNum(d.hours)}</span>` : ''}
         <div class="fill" style="height:${(d.hours / max) * 85}%"></div>
       </div>`).join('')}</div>
-    <div class="vlabels">${st.dailyWeek.map((d) => `<span>${parseIso(d.date).toLocaleDateString('en-US', { weekday: 'short' })}</span>`).join('')}</div>`;
+    <div class="vlabels">${st.dailyWeek.map((d) => `<span>${d.date === today ? '🌸 ' : ''}${parseIso(d.date).toLocaleDateString('en-US', { weekday: 'short' })}</span>`).join('')}</div>`;
 
   const catScope = $('#cat-scope').value;
   const catRows = catScope === 'week' ? st.categoryWeek : st.categoryAll;
@@ -376,7 +428,8 @@ $('#entry-form').onsubmit = async (ev) => {
   if (!data.task && !data.workDone) { toast('Add a task or a description'); return; }
   if (editingId) await actions.updateEntry(editingId, data); else await actions.addEntry(data);
   dlg.close();
-  toast(editingId ? 'Entry updated' : 'Logged');
+  if (editingId) toast('Entry updated ✏️');
+  else { celebrate(); toast(cheer()); }
 };
 $('#entry-delete').onclick = async () => {
   if (editingId && confirm('Delete this entry?')) { await actions.deleteEntry(editingId); dlg.close(); toast('Deleted'); }
@@ -395,7 +448,9 @@ document.addEventListener('change', async (ev) => {
   const id = li.dataset.todo;
   const td = state.todos.find((x) => x.id === id);
   if (ev.target.checked && td) {
+    celebrate(ev.target);
     const res = await jarvis.completeTodo(td); // marks done, then offers to log time
+    delete res.celebrate;
     jarvisSay(res, false);
   } else {
     await actions.updateTodo(id, { done: false });
@@ -611,6 +666,7 @@ async function rhythmTick() {
 // ------------------------------------------------------------------ boot
 
 async function boot() {
+  startPetals();
   await api('GET', 'state');
   show((location.hash || '#today').slice(1) || 'today');
   const today = isoDate();

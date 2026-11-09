@@ -4,24 +4,25 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Jarvis · PR Work Tracker</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='40' fill='none' stroke='%2338bdf8' stroke-width='10'/><circle cx='50' cy='50' r='14' fill='%2338bdf8'/></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌸</text></svg>">
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
+  <div class="petals" id="petals" aria-hidden="true"></div>
   <header class="topbar">
     <div class="brand">
-      <span class="logo" aria-hidden="true"></span>
+      <span class="logo" aria-hidden="true">🌸</span>
       <div>
-        <div class="brand-name">JARVIS</div>
+        <div class="brand-name">Jarvis</div>
         <div class="brand-sub" id="today-label"></div>
       </div>
     </div>
     <nav class="tabs" role="tablist">
-      <button role="tab" data-view="today" class="active">Today</button>
-      <button role="tab" data-view="log">Log</button>
-      <button role="tab" data-view="todos">To-Do <span class="badge" id="todo-badge" hidden></span></button>
-      <button role="tab" data-view="dashboard">Dashboard</button>
-      <button role="tab" data-view="settings">Settings</button>
+      <button role="tab" data-view="today" class="active">🌷 Today</button>
+      <button role="tab" data-view="log">📒 Log</button>
+      <button role="tab" data-view="todos">🌱 To-Do <span class="badge" id="todo-badge" hidden></span></button>
+      <button role="tab" data-view="dashboard">🌻 Dashboard</button>
+      <button role="tab" data-view="settings">🪴 Settings</button>
     </nav>
     <div class="sync-pill" id="sync-pill" title="Google Sheet sync status"></div>
   </header>
@@ -37,7 +38,7 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg>
             </button>
             <div>
-              <div class="jarvis-status" id="jarvis-status">Click the mic or press <kbd>⌘J</kbd> and speak</div>
+              <div class="jarvis-status" id="jarvis-status">Tap the flower or press <kbd>⌘J</kbd> and talk to me 🌼</div>
               <div class="interim" id="interim"></div>
             </div>
           </div>
