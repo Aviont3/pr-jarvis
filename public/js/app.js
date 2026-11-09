@@ -256,6 +256,7 @@ function renderAll() {
   $('#project-options').innerHTML = (state.settings.projects || []).map((p) => `<option value="${h(p)}">`).join('');
   renderSync();
   renderGoogleStatus();
+  renderBackups();
   renderHello();
   renderTimer();
   renderMeetings();
@@ -717,7 +718,7 @@ function renderSettings() {
   f.sheetLink.value = s.sheetLink || '';
   f.keywords.value = keywordsToText(s.categories || [], s.keywords || {});
   f.defaultCategory.innerHTML = categoryOptions(s.defaultCategory);
-  for (const k of ['speakReplies', 'autoBrief', 'notesToTodos', 'autoSaveVoiceLogs', 'calendarEnabled', 'calendarAll', 'meetingPrompts']) f[k].checked = !!s[k];
+  for (const k of ['speakReplies', 'autoBrief', 'notesToTodos', 'autoSaveVoiceLogs', 'calendarEnabled', 'calendarAll', 'meetingPrompts', 'driveBackup']) f[k].checked = !!s[k];
   f.meetingCategory.innerHTML = categoryOptions(s.meetingCategory).replace('<option value="">(none)</option>', '');
   f.checkInMinutes.value = String(s.checkInMinutes || 0);
   f.workStart.value = s.workStart || '09:00';
@@ -753,6 +754,7 @@ async function saveSettings() {
     autoSaveVoiceLogs: f.autoSaveVoiceLogs.checked,
     calendarEnabled: f.calendarEnabled.checked, calendarAll: f.calendarAll.checked,
     meetingPrompts: f.meetingPrompts.checked, meetingCategory: f.meetingCategory.value,
+    driveBackup: f.driveBackup.checked,
     voiceName: f.voiceName.value, checkInMinutes: Number(f.checkInMinutes.value),
     workStart: f.workStart.value, workEnd: f.workEnd.value, sheetUrl: f.sheetUrl.value.trim(),
   };
@@ -1157,6 +1159,13 @@ function openGoogleGuide() {
           ? '<p>✅ Google Sheet connected!</p><p class="bad">⚠️ Calendar didn\'t connect. That\'s OK, your sheet works. You can try again later from Settings.</p>'
           : `<p>✅ Google Sheet connected!</p><p>✅ Calendar connected (${meetingsOn(c.events, isoDate()).length} meetings today)</p>`;
         if (c.error) await api('PATCH', 'settings', { calendarEnabled: false });
+        // First backup to Google Drive
+        checks.insertAdjacentHTML('beforeend', '<p id="g-backup-line">⏳ Saving your first backup to Google Drive…</p>');
+        await api('PATCH', 'settings', { driveBackup: true });
+        const bk = (await api('POST', 'backup/now')).backups || {};
+        $('#g-backup-line', body).outerHTML = bk.lastDriveAt && !bk.driveError
+          ? '<p>✅ Backups to Google Drive are on (folder “Jarvis Backups”)</p>'
+          : '<p class="bad">⚠️ Drive backups didn\'t work yet. Backups are still saved on your Mac. You can try again from Settings.</p>';
         api('POST', 'sync/all').catch(() => {}); // copy existing work into the sheet
         celebrate($('#g-checks', body));
         await new Promise((r) => setTimeout(r, 1200));
@@ -1222,6 +1231,143 @@ $('#help-tour').onclick = () => { helpDlg.close(); startTour(); };
 $('#help-google').onclick = () => { helpDlg.close(); openGoogleGuide(); };
 $('#google-connect').onclick = () => openGoogleGuide();
 $('#rerun-welcome').onclick = () => openWelcome();
+
+// ---- Saving & backups
+
+const timeAgo = (iso) => {
+  if (!iso) return 'not yet';
+  const d = new Date(iso);
+  const mins = Math.round((Date.now() - d) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  return d.toDateString() === new Date().toDateString()
+    ? `today at ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+    : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+};
+
+function renderBackups() {
+  const b = state.backups || {};
+  const s = state.settings;
+  const lines = [`<li>✅ <b>On this Mac:</b> last backup ${timeAgo(b.lastLocalAt)}</li>`];
+  let showUpdate = false;
+  if (!s.sheetUrl) {
+    lines.push('<li>☁️ <b>Google Drive:</b> connect Google (above) to also keep backups in your Drive</li>');
+  } else if (!s.driveBackup) {
+    lines.push('<li>☁️ <b>Google Drive:</b> off</li>');
+  } else if (b.scriptOutdated) {
+    lines.push('<li class="bad">⚠️ <b>Google Drive:</b> your Google script needs a quick update first. Click “Update Google script”.</li>');
+    showUpdate = true;
+  } else if (b.driveError) {
+    lines.push(`<li class="bad">⚠️ <b>Google Drive:</b> ${h(b.driveError)} <span class="muted">(Jarvis will keep trying every 5 minutes)</span></li>`);
+    showUpdate = /permission|authoriz|access/i.test(b.driveError);
+  } else {
+    lines.push(`<li>✅ <b>Google Drive:</b> last backup ${timeAgo(b.lastDriveAt)}</li>`);
+  }
+  $('#backup-status').innerHTML = lines.join('');
+  if (b.scriptOutdated && s.sheetUrl && s.driveBackup && !renderBackups.nudged && !guide) {
+    renderBackups.nudged = true;
+    toast('☁️ One quick step to turn on Google Drive backups', { action: 'Show me', onAction: openScriptUpdateGuide });
+  }
+  $('#drive-backup-row').hidden = !s.sheetUrl;
+  $('#script-update').hidden = !showUpdate;
+  const folder = $('#backup-folder');
+  folder.hidden = !(s.sheetUrl && b.driveFolderUrl);
+  if (b.driveFolderUrl) folder.href = b.driveFolderUrl;
+}
+
+$('#backup-now').onclick = async () => {
+  const btn = $('#backup-now');
+  btn.disabled = true;
+  btn.textContent = '⏳ Backing up…';
+  try {
+    const b = (await api('POST', 'backup/now')).backups || {};
+    toast(state.settings.sheetUrl && state.settings.driveBackup && b.driveError ? '💾 Saved on this Mac. Google Drive needs attention.' : '💾 Backed up!');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '💾 Back up now';
+  }
+};
+
+$('#restore-file').onchange = async (ev) => {
+  const file = ev.target.files[0];
+  ev.target.value = '';
+  if (!file) return;
+  let data;
+  try { data = JSON.parse(await file.text()); } catch { toast('That file isn’t a Jarvis backup.'); return; }
+  const n = Array.isArray(data.entries) ? data.entries.length : 0;
+  if (!confirm(`Replace everything in Jarvis with this backup (${n} entries)?\n\nWhat you have now is saved first, just in case.`)) return;
+  try {
+    const r = await api('POST', 'backup/restore', { data });
+    celebrate();
+    toast(`♻️ ${r.message}`);
+    renderSettings();
+    loadCalendar(true);
+  } catch (err) {
+    toast(`❌ ${err.message}`);
+  }
+};
+
+// Updating the Google script after Jarvis gains a feature (e.g. Drive backups).
+function openScriptUpdateGuide() {
+  let copied = false;
+  runGuide([
+    {
+      emoji: '🔧', title: 'Update your Google script',
+      html: `<p class="lead">Jarvis learned something new, so your Google script needs the newest code. It takes about a minute, and your link stays the same.</p>
+             <p><button type="button" class="btn primary" id="u-open">📗 Open my Google Sheet</button></p>
+             <p>In the sheet, click ${ui('Extensions', 'hl')} → ${ui('Apps Script', 'hl')}.</p>`,
+      noBack: true,
+      onShow: (body) => {
+        $('#u-open', body).onclick = () => {
+          if (state.settings.sheetLink) window.open(state.settings.sheetLink, '_blank', 'noopener');
+          else toast('Open your Google Sheet, then click Extensions → Apps Script');
+        };
+      },
+    },
+    {
+      emoji: '📋', title: 'Replace the code',
+      html: `<p><b>1.</b> <button type="button" class="btn primary" id="u-copy">📋 Copy the new code</button> <span class="ok-note" id="u-copied"></span></p>
+             <p><b>2.</b> In Apps Script, click in the code and press ${kbd('⌘ Cmd')} + ${kbd('A')}, then ${kbd('Delete')}, so it's <b>completely empty</b>.</p>
+             <p><b>3.</b> Press ${kbd('⌘ Cmd')} + ${kbd('V')} to paste, then click ${ui('💾')} to save.</p>`,
+      onShow: (body) => {
+        $('#u-copy', body).onclick = async () => {
+          await navigator.clipboard.writeText(await (await fetch('/api/apps-script')).text());
+          copied = true;
+          $('#u-copied', body).textContent = '✓ Copied!';
+        };
+      },
+      onNext: async () => { if (!copied) { toast('Click “Copy the new code” first 📋'); return false; } return true; },
+    },
+    {
+      emoji: '🚀', title: 'Turn on the new version',
+      html: `<ol class="click-steps">
+               <li>Click ${ui('Deploy', 'blue')} → ${ui('Manage deployments')}.</li>
+               <li>Click the pencil ${ui('✏️')} (Edit).</li>
+               <li>Under “Version”, choose ${ui('New version', 'hl')}.</li>
+               <li>Click ${ui('Deploy', 'blue')}. If Google asks for permission (for example to use <b>Google Drive</b> for backups), click ${ui('Authorize access')} → your account → ${ui('Advanced')} → ${ui('Go to … (unsafe)')} → ${ui('Allow', 'blue')}.</li>
+             </ol>`,
+    },
+    {
+      emoji: '✅', title: "Let's check it",
+      html: '<div class="check-list" id="u-checks"><p>Click <b>Check it</b> when you\'ve clicked Deploy.</p></div>',
+      nextLabel: 'Check it',
+      onNext: async (body) => {
+        const checks = $('#u-checks', body);
+        checks.innerHTML = '<p>⏳ Saving a backup to Google Drive…</p>';
+        const b = (await api('POST', 'backup/now')).backups || {};
+        if (b.scriptOutdated || b.driveError) {
+          checks.innerHTML = `<p class="bad">❌ ${h(b.driveError || 'Still the old code.')}</p><p class="muted">Make sure you chose <b>New version</b> before clicking Deploy. Click Back to see the steps.</p>`;
+          return false;
+        }
+        checks.innerHTML = '<p>✅ All set! Your backups are now saved in Google Drive too.</p>';
+        celebrate(checks);
+        await new Promise((r) => setTimeout(r, 1200));
+        return true;
+      },
+    },
+  ], () => { renderAll(); renderSettings(); });
+}
+$('#script-update').onclick = () => openScriptUpdateGuide();
 
 // ---- Updates
 
@@ -1417,6 +1563,7 @@ async function boot() {
   setInterval(rhythmTick, 60000);
   setInterval(() => loadCalendar(), 5 * 60000);
   setInterval(() => { if (state.sync?.pending) api('GET', 'state'); }, 15000);
+  setInterval(() => { if ($('#view-settings').classList.contains('active')) api('GET', 'state'); }, 30000);
   checkForUpdates();
   setInterval(() => checkForUpdates(), 6 * 3600 * 1000);
   if (!voice.supported) jarvisSay({ speech: 'Talking to me works in Google Chrome. Here you can type instead, and everything else works the same.' }, false);

@@ -12,6 +12,9 @@
  * After updating the script, use Deploy → Manage deployments → ✏️ Edit →
  * Version: New version → Deploy, and approve the calendar permission.
  * The web app URL stays the same. Jarvis only reads events; it never changes your calendar.
+ *
+ * Backups: Jarvis also saves a copy of all your data in a "Jarvis Backups" folder
+ * in your Google Drive (one file per day, the last 30 days are kept).
  */
 const TOKEN = 'PASTE_TOKEN_HERE';
 
@@ -53,6 +56,7 @@ function apply_(ctx, op) {
   switch (op.op) {
     case 'ping': return;
     case 'getEvents': ctx.out.events = getEvents_(op.from, op.to, op.allCalendars); return;
+    case 'backup': ctx.out.backup = backup_(op.name, op.content, op.keep); return;
     case 'upsertEntry': return upsert_(ctx, logSheet_(ctx.ss), op.entry.id, entryRow_(op.entry), 'log');
     case 'deleteEntry': return remove_(ctx, logSheet_(ctx.ss), op.id, 'log');
     case 'upsertTodo': return upsert_(ctx, todoSheet_(ctx.ss), op.todo.id, todoRow_(op.todo), 'todo');
@@ -194,6 +198,32 @@ function getEvents_(fromIso, toIso, allCalendars) {
   });
   out.sort(function (a, b) { return a.start < b.start ? -1 : 1; });
   return out;
+}
+
+// ---------------------------------------------------------------- Backups to Google Drive
+
+function backup_(name, content, keep) {
+  if (!/^jarvis-backup-[\d-]+\.json$/.test(String(name))) throw new Error('Bad backup name');
+  const folders = DriveApp.getFoldersByName('Jarvis Backups');
+  const folder = folders.hasNext() ? folders.next() : DriveApp.createFolder('Jarvis Backups');
+  const existing = folder.getFilesByName(name);
+  let file;
+  if (existing.hasNext()) {
+    file = existing.next();
+    file.setContent(content); // today's backup is updated through the day
+  } else {
+    file = folder.createFile(name, content, 'application/json');
+  }
+  // Keep only the newest backups.
+  const all = [];
+  const it = folder.getFiles();
+  while (it.hasNext()) {
+    const f = it.next();
+    if (/^jarvis-backup-/.test(f.getName())) all.push(f);
+  }
+  all.sort(function (a, b) { return a.getName() < b.getName() ? 1 : -1; });
+  all.slice(keep || 30).forEach(function (f) { f.setTrashed(true); });
+  return { name: name, fileUrl: file.getUrl(), folderUrl: folder.getUrl() };
 }
 
 function json_(obj) {

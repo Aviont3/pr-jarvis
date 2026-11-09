@@ -442,3 +442,14 @@ li:hover .ra, tr:hover .ra, .ra:focus-visible { opacity: 1; }
 .toast-btn { border: 0; background: var(--accent); color: #fff; font-weight: 800; border-radius: 999px; padding: 6px 14px; cursor: pointer; }
 .toast-btn:hover { background: var(--accent-strong); }
 @media (hover: none) { .ra { opacity: 1; } }
+
+/* ---------------------------------------------------------------- saving & backups */
+.backups-panel .row { margin-top: 10px; }
+.backup-status { list-style: none; padding: 0; margin: 10px 0; display: grid; gap: 6px; }
+.backup-status li { background: var(--surface-2); border-radius: 12px; padding: 8px 12px; font-size: 14px; }
+.backup-status li.bad { background: #fff1f3; color: var(--danger); }
+.file-btn { cursor: pointer; }
+a.btn { color: var(--text-primary); }
+a.btn.primary { color: #fff; }
+.settings label.file-btn { display: inline-block; width: auto; margin: 0; color: var(--text-primary); font-weight: 600; }
+.settings .row label.file-btn { flex: none; }

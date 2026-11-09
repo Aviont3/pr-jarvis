@@ -225,9 +225,22 @@
           <h2>🌱 Updates</h2>
           <p class="muted" id="version-line"></p>
           <div class="row"><button type="button" class="btn ghost" id="update-check">Check for updates</button><span class="muted" id="update-msg"></span></div>
-          <h2 style="margin-top:18px">💾 Your data</h2>
-          <p class="muted">Your work is saved on this Mac and backed up every day.</p>
-          <a class="btn ghost" href="/api/backup">Save a backup copy</a>
+        </div>
+
+        <div class="panel backups-panel">
+          <h2>💾 Saving &amp; backups</h2>
+          <p class="muted">Everything you log is saved the moment you save it. Jarvis also makes a backup copy after every change, and checks every 5 minutes.</p>
+          <ul class="backup-status" id="backup-status"></ul>
+          <label class="check" id="drive-backup-row"><input type="checkbox" name="driveBackup"> ☁️ Also back up to my Google Drive (folder “Jarvis Backups”, last 30 days kept)</label>
+          <div class="row">
+            <button type="button" class="btn primary small" id="backup-now">💾 Back up now</button>
+            <a class="btn ghost small" id="backup-folder" target="_blank" rel="noopener" hidden>📂 Open my Drive backups</a>
+            <button type="button" class="btn ghost small" id="script-update" hidden>🔧 Update Google script</button>
+          </div>
+          <div class="row">
+            <a class="btn ghost small" href="/api/backup">⬇️ Save a backup copy</a>
+            <label class="btn ghost small file-btn">♻️ Restore from a backup…<input type="file" id="restore-file" accept=".json,application/json" hidden></label>
+          </div>
         </div>
 
         <details class="panel advanced">

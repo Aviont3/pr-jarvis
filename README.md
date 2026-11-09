@@ -62,10 +62,12 @@ Or tap the flower 🌼 and just talk, in your own words:
 
 When there's a new version, a small banner appears at the top. Click **Update now** and Jarvis updates itself in a few seconds. Your work is never touched. You can also check in **⚙️ Settings → Updates**.
 
-## Your data
+## Your data: saving & backups
 
-- Saved on your Mac in `~/Library/Application Support/Jarvis/data`, with a daily backup.
-- **⚙️ Settings → Save a backup copy** downloads everything as one file.
+- **Saved instantly:** everything you log is saved on your Mac the moment you save it (in `~/Library/Application Support/Jarvis/data`).
+- **Automatic backups:** a backup copy is made shortly after every change, and Jarvis checks every 5 minutes.
+- **Google Drive backups:** if Google is connected, each backup also goes to a **“Jarvis Backups”** folder in your Google Drive (one file per day, the last 30 days are kept). If you connected Google before this feature existed, Jarvis shows **“One quick step to turn on Google Drive backups”** and walks you through updating the script (about a minute).
+- **⚙️ Settings → Saving & backups** shows when the last backup happened. It also has **Back up now**, **Open my Drive backups**, **Save a backup copy** (downloads one file) and **Restore from a backup…** (pick a backup file, and Jarvis puts everything back; what you had before is saved first, just in case).
 - Only your own Mac can open Jarvis.
 
 ## Uninstall

@@ -48,6 +48,7 @@ const DEFAULT_SETTINGS = () => ({
   calendarAll: false,
   meetingPrompts: true,
   meetingCategory: 'Internal Meetings',
+  driveBackup: true,
 });
 
 function emptyDb() {
@@ -58,6 +59,7 @@ function emptyDb() {
     todos: [],
     timer: null,
     sync: { queue: [], lastSyncAt: null, lastError: null },
+    backups: { lastLocalAt: null, lastDriveAt: null, driveError: null, driveFolderUrl: null, scriptOutdated: false },
     meta: { lastBriefDate: null },
   };
 }
@@ -72,6 +74,7 @@ function loadDb() {
     settings: { ...base.settings, ...raw.settings },
     sync: { ...base.sync, ...raw.sync },
     meta: { ...base.meta, ...raw.meta },
+    backups: { ...base.backups, ...raw.backups },
   };
 }
 
@@ -81,6 +84,61 @@ function save() {
   const tmp = DB_FILE + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
   fs.renameSync(tmp, DB_FILE);
+}
+
+// ------------------------------------------------------------------ automatic backups
+// Every change is saved to db.json immediately. On top of that, a backup copy is made
+// shortly after each change (batched), with a 5-minute check as a safety net:
+//   • on this Mac: data/backups/latest.json (+ a start-of-day copy per day, last 30 days)
+//   • in Google Drive (if connected): "Jarvis Backups/jarvis-backup-YYYY-MM-DD.json"
+
+const BACKUP_DELAY = Number(process.env.JARVIS_BACKUP_DELAY_MS) || 20 * 1000; // wait for a burst of edits to finish
+const BACKUP_CHECK = 5 * 60 * 1000;
+let backupDirty = false;
+let backupTimer = null;
+let backingUp = false;
+
+function markChanged() {
+  backupDirty = true;
+  clearTimeout(backupTimer);
+  backupTimer = setTimeout(() => runBackup(), BACKUP_DELAY);
+}
+
+const backupSnapshot = () => JSON.stringify({ ...db, sync: { ...db.sync, queue: [] } }, null, 2);
+
+async function runBackup({ force = false } = {}) {
+  if (backingUp || (!backupDirty && !force)) return db.backups;
+  backingUp = true;
+  backupDirty = false;
+  const b = db.backups;
+  const content = backupSnapshot();
+  try {
+    fs.mkdirSync(BACKUP_DIR, { recursive: true });
+    const tmp = path.join(BACKUP_DIR, 'latest.json.tmp');
+    fs.writeFileSync(tmp, content);
+    fs.renameSync(tmp, path.join(BACKUP_DIR, 'latest.json'));
+    b.lastLocalAt = new Date().toISOString();
+    if (db.settings.sheetUrl && db.settings.driveBackup) {
+      try {
+        const r = await callSheet({ ops: [{ op: 'backup', name: `jarvis-backup-${isoDate()}.json`, content, keep: 30 }] });
+        if (!r.backup) {
+          b.scriptOutdated = true;
+          throw new Error('Your Google script needs a quick update before it can save backups.');
+        }
+        b.scriptOutdated = false;
+        b.lastDriveAt = new Date().toISOString();
+        b.driveFolderUrl = r.backup.folderUrl;
+        b.driveError = null;
+      } catch (err) {
+        b.driveError = String(err.message || err);
+        backupDirty = true; // try again at the next check
+      }
+    }
+  } finally {
+    backingUp = false;
+    save();
+  }
+  return b;
 }
 
 function backup() {
@@ -99,6 +157,7 @@ const publicState = () => ({
   timer: db.timer,
   sync: { pending: db.sync.queue.length, lastSyncAt: db.sync.lastSyncAt, lastError: db.sync.lastError },
   meta: db.meta,
+  backups: db.backups,
 });
 
 // ------------------------------------------------------------------ domain
@@ -268,7 +327,7 @@ async function readBody(req) {
   let data = '';
   for await (const chunk of req) {
     data += chunk;
-    if (data.length > 5e6) throw new Error('Request too large');
+    if (data.length > 60e6) throw new Error('Request too large');
   }
   return data ? JSON.parse(data) : {};
 }
@@ -289,7 +348,11 @@ async function api(req, res, pathname) {
   const parts = pathname.split('/').filter(Boolean).slice(1); // drop "api"
   const [resource, id, action] = parts;
   const body = ['POST', 'PATCH', 'PUT'].includes(m) ? await readBody(req) : {};
-  const ok = (extra = {}) => { save(); return send(res, 200, { state: publicState(), ...extra }); };
+  const ok = (extra = {}) => {
+    save();
+    if (m !== 'GET' && ['entries', 'todos', 'timer', 'settings'].includes(resource)) markChanged();
+    return send(res, 200, { state: publicState(), ...extra });
+  };
 
   if (resource === 'state' && m === 'GET') return send(res, 200, { state: publicState() });
 
@@ -422,6 +485,34 @@ async function api(req, res, pathname) {
     }
   }
 
+  if (resource === 'backup' && id === 'now' && m === 'POST') {
+    const b = await runBackup({ force: true });
+    return send(res, 200, { state: publicState(), backups: b });
+  }
+
+  // Restore everything from a backup file (from Google Drive or "Save a backup copy").
+  if (resource === 'backup' && id === 'restore' && m === 'POST') {
+    const data = body.data;
+    if (!data || !Array.isArray(data.entries) || !Array.isArray(data.todos) || !data.settings) {
+      return send(res, 400, { error: 'That file isn’t a Jarvis backup. Pick a file named like “jarvis-backup-2026-11-09.json”.' });
+    }
+    fs.mkdirSync(BACKUP_DIR, { recursive: true });
+    const safety = path.join(BACKUP_DIR, `before-restore-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+    fs.writeFileSync(safety, backupSnapshot()); // in case they restore the wrong file
+    const base = emptyDb();
+    db = {
+      ...base, ...data,
+      settings: { ...base.settings, ...data.settings, sheetToken: db.settings.sheetToken, sheetUrl: db.settings.sheetUrl || data.settings.sheetUrl || '' },
+      sync: { ...base.sync },
+      meta: { ...base.meta, ...data.meta },
+      backups: { ...db.backups },
+      timer: null,
+    };
+    if (db.settings.sheetUrl) { enqueueEverything(); scheduleFlush(500); }
+    markChanged();
+    return ok({ message: `Restored ${db.entries.length} entries and ${db.todos.length} to-dos.` });
+  }
+
   if (resource === 'backup' && m === 'GET') {
     res.writeHead(200, {
       'Content-Type': 'application/json',
@@ -518,6 +609,9 @@ server.listen(PORT, HOST, () => {
   backup();
   save();
   setInterval(backup, 6 * 3600 * 1000);
+  setInterval(() => runBackup(), BACKUP_CHECK);
+  backupDirty = true; // one backup shortly after starting
+  backupTimer = setTimeout(() => runBackup(), BACKUP_DELAY);
   if (db.sync.queue.length) scheduleFlush(2000);
   console.log(`\n  🤖 Jarvis is running at  http://localhost:${PORT}\n  Data file: ${DB_FILE}\n  Press Ctrl+C to stop.\n`);
 });
