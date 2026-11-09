@@ -15,6 +15,7 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 const INSTALLED = process.env.JARVIS_INSTALLED === '1'; // set by install.sh
 const REPO_RAW = 'https://raw.githubusercontent.com/Aviont3/pr-jarvis/main';
+const SCRIPT_VERSION = 3; // must match apps-script/Code.gs
 const REPO_ZIP = 'https://github.com/Aviont3/pr-jarvis/archive/refs/heads/main.zip';
 const PUBLIC = path.join(ROOT, 'public');
 const DATA_DIR = process.env.JARVIS_DATA_DIR || path.join(ROOT, 'data');
@@ -125,7 +126,6 @@ async function runBackup({ force = false } = {}) {
           b.scriptOutdated = true;
           throw new Error('Your Google script needs a quick update before it can save backups.');
         }
-        b.scriptOutdated = false;
         b.lastDriveAt = new Date().toISOString();
         b.driveFolderUrl = r.backup.folderUrl;
         b.driveError = null;
@@ -153,7 +153,8 @@ function backup() {
 const publicState = () => ({
   settings: db.settings,
   entries: db.entries,
-  todos: db.todos,
+  todos: db.todos.filter((t) => !t.deletedAt),
+  deletedTodos: db.todos.filter((t) => t.deletedAt).sort((a, b) => (a.deletedAt < b.deletedAt ? 1 : -1)).slice(0, 100),
   timer: db.timer,
   sync: { pending: db.sync.queue.length, lastSyncAt: db.sync.lastSyncAt, lastError: db.sync.lastError },
   meta: db.meta,
@@ -205,7 +206,7 @@ function updateEntry(id, fields) {
   Object.assign(e, cleanEntry(fields), { updatedAt: new Date().toISOString() });
   enqueue({ op: 'upsertEntry', id: e.id });
   if (db.settings.notesToTodos && e.notes !== before) {
-    const linked = db.todos.find((t) => t.sourceEntryId === e.id && !t.done);
+    const linked = db.todos.find((t) => t.sourceEntryId === e.id && !t.done && !t.deletedAt);
     if (linked && e.notes) { linked.text = e.notes; linked.project = e.project; enqueue({ op: 'upsertTodo', id: linked.id }); }
     else if (!linked && e.notes) addTodo({ text: e.notes, project: e.project, sourceEntryId: e.id });
   }
@@ -283,6 +284,8 @@ async function callSheet(payload) {
       : `Google returned HTTP ${res.status}.`);
   }
   if (!json.ok) throw new Error(json.error || 'The sheet script reported an error.');
+  // Older scripts don't know newer features (Drive backups, deleted to-dos).
+  db.backups.scriptOutdated = (Number(json.scriptVersion) || 0) < SCRIPT_VERSION;
   return json;
 }
 
@@ -365,9 +368,9 @@ async function api(req, res, pathname) {
       db.entries = db.entries.filter((x) => x.id !== id);
       enqueue({ op: 'upsertEntry', id }); // materializes to a delete
       // The open to-do made from this entry's "next step" goes too (finished ones stay).
-      const todos = db.todos.filter((t) => t.sourceEntryId === id && !t.done);
-      db.todos = db.todos.filter((t) => !todos.includes(t));
-      for (const t of todos) enqueue({ op: 'upsertTodo', id: t.id });
+      const now = new Date().toISOString();
+      const todos = db.todos.filter((t) => t.sourceEntryId === id && !t.done && !t.deletedAt);
+      for (const t of todos) { t.deletedAt = now; enqueue({ op: 'upsertTodo', id: t.id }); }
       return ok({ removed: { entry, todos } }); // the client keeps this for Undo
     }
     // Undo a delete: put back exactly what was removed (same ids, no new to-dos).
@@ -379,7 +382,11 @@ async function api(req, res, pathname) {
         enqueue({ op: 'upsertEntry', id: entry.id });
       }
       for (const t of todos) {
-        if (t?.id && !db.todos.some((x) => x.id === t.id)) { db.todos.push(t); enqueue({ op: 'upsertTodo', id: t.id }); }
+        if (!t?.id) continue;
+        const existing = db.todos.find((x) => x.id === t.id);
+        if (existing) existing.deletedAt = null;
+        else db.todos.push({ ...t, deletedAt: null });
+        enqueue({ op: 'upsertTodo', id: t.id });
       }
       return ok({ item: entry });
     }
@@ -399,10 +406,20 @@ async function api(req, res, pathname) {
       enqueue({ op: 'upsertTodo', id });
       return ok({ item: t });
     }
+    // Deleting keeps the to-do (with its deletion date) so it can be seen and restored.
     if (m === 'DELETE' && id) {
-      db.todos = db.todos.filter((x) => x.id !== id);
+      const t = db.todos.find((x) => x.id === id);
+      if (!t) return send(res, 404, { error: 'Not found' });
+      t.deletedAt = new Date().toISOString();
       enqueue({ op: 'upsertTodo', id });
-      return ok();
+      return ok({ item: t });
+    }
+    if (m === 'POST' && id && action === 'restore') {
+      const t = db.todos.find((x) => x.id === id);
+      if (!t) return send(res, 404, { error: 'Not found' });
+      t.deletedAt = null;
+      enqueue({ op: 'upsertTodo', id });
+      return ok({ item: t });
     }
   }
 

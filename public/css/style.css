@@ -453,3 +453,13 @@ a.btn { color: var(--text-primary); }
 a.btn.primary { color: #fff; }
 .settings label.file-btn { display: inline-block; width: auto; margin: 0; color: var(--text-primary); font-weight: 600; }
 .settings .row label.file-btn { flex: none; }
+
+/* ---------------------------------------------------------------- to-do dates & deleted list */
+.todo-list .meta.dates { font-size: 11.5px; margin-top: 1px; }
+.stamp { white-space: nowrap; cursor: default; }
+.stamp.done-stamp { color: var(--accent-strong); }
+.stamp.del-stamp { color: var(--danger); }
+.todo-list li.deleted { align-items: center; }
+.todo-list li.deleted .t > span:first-child { color: var(--text-muted); text-decoration: line-through; text-decoration-color: var(--danger); }
+.del-icon { font-size: 16px; opacity: .7; }
+.deleted-wrap summary::before { content: "" !important; }

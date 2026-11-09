@@ -36,6 +36,7 @@ const actions = {
   addTodo: async (t) => (await api('POST', 'todos', t)).item,
   updateTodo: async (id, t) => (await api('PATCH', `todos/${id}`, t)).item,
   deleteTodo: async (id) => api('DELETE', `todos/${id}`),
+  restoreTodo: async (id) => (await api('POST', `todos/${id}/restore`)).item,
   startTimer: async (t) => (await api('POST', 'timer/start', t)).item,
   stopTimer: async (note) => (await api('POST', 'timer/stop', { note })).item,
   cancelTimer: async () => api('POST', 'timer/cancel'),
@@ -332,12 +333,34 @@ function dueMeta(td) {
   return fmtDate(td.due);
 }
 
+// "today 2:15 PM" / "yesterday" / "Nov 3" (+ exact time on hover)
+function whenLabel(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const day = isoDate(d);
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (day === isoDate()) return `today ${time}`;
+  if (day === isoDate(addDays(new Date(), -1))) return 'yesterday';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(d.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : {}) });
+}
+const fullWhen = (iso) => new Date(iso).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+const stamp = (label, iso, cls = '') => (iso ? `<span class="stamp ${cls}" title="${label} ${fullWhen(iso)}">${label} ${whenLabel(iso)}</span>` : '');
+
 function todoLi(td) {
   const meta = [dueMeta(td), td.project && h(displayProject(td.project)), td.priority === 'high' && 'High priority'].filter(Boolean).join(' · ');
+  const dates = [stamp('Added', td.createdAt), td.done && stamp('Completed', td.doneAt, 'done-stamp')].filter(Boolean).join(' · ');
   return `<li class="${td.done ? 'done' : ''} ${td.priority === 'high' ? 'high' : ''}" data-todo="${td.id}">
     <input type="checkbox" ${td.done ? 'checked' : ''} aria-label="Done">
-    <div class="t"><span contenteditable="plaintext-only" spellcheck="false">${h(td.text)}</span>${meta ? `<div class="meta">${meta}</div>` : ''}</div>
+    <div class="t"><span contenteditable="plaintext-only" spellcheck="false">${h(td.text)}</span>${meta ? `<div class="meta">${meta}</div>` : ''}${dates ? `<div class="meta dates">${dates}</div>` : ''}</div>
     <button class="x" title="Delete">✕</button></li>`;
+}
+
+function deletedTodoLi(td) {
+  const dates = [stamp('Added', td.createdAt), td.doneAt && stamp('Completed', td.doneAt, 'done-stamp'), stamp('Deleted', td.deletedAt, 'del-stamp')].filter(Boolean).join(' · ');
+  return `<li class="deleted" data-deleted-todo="${td.id}">
+    <span class="del-icon">🗑️</span>
+    <div class="t"><span>${h(td.text)}</span>${td.project ? `<div class="meta">${h(displayProject(td.project))}</div>` : ''}<div class="meta dates">${dates}</div></div>
+    <button type="button" class="btn ghost small" data-restore-todo="${td.id}">↩️ Restore</button></li>`;
 }
 
 function renderToday() {
@@ -365,6 +388,9 @@ function renderTodos() {
   const done = state.todos.filter((x) => x.done).sort((a, b2) => (a.doneAt < b2.doneAt ? 1 : -1)).slice(0, 100);
   $('#done-count').textContent = `(${state.todos.filter((x) => x.done).length})`;
   $('#todo-done').innerHTML = done.map(todoLi).join('');
+  const deleted = state.deletedTodos || [];
+  $('#deleted-count').textContent = `(${deleted.length})`;
+  $('#todo-deleted').innerHTML = deleted.length ? deleted.map(deletedTodoLi).join('') : '<li class="empty">Nothing deleted.</li>';
 }
 
 function renderLog() {
@@ -596,9 +622,20 @@ document.addEventListener('change', async (ev) => {
   }
 });
 document.addEventListener('click', async (ev) => {
+  const restoreBtn = ev.target.closest('[data-restore-todo]');
+  if (restoreBtn) {
+    await actions.restoreTodo(restoreBtn.dataset.restoreTodo);
+    toast('Brought it back 🌷');
+    return;
+  }
   if (!ev.target.matches('.todo-list .x')) return;
   const li = ev.target.closest('[data-todo]');
+  const td = state.todos.find((x) => x.id === li.dataset.todo);
   await actions.deleteTodo(li.dataset.todo);
+  toast(`🗑️ Deleted “${shorten(td?.text, 40)}” (see To-Dos → Deleted)`, {
+    action: '↩️ Undo',
+    onAction: async () => { await actions.restoreTodo(td.id); toast('Brought it back 🌷'); },
+  });
 });
 document.addEventListener('focusout', async (ev) => {
   const span = ev.target.closest('[data-todo] [contenteditable]');
@@ -1252,11 +1289,11 @@ function renderBackups() {
   let showUpdate = false;
   if (!s.sheetUrl) {
     lines.push('<li>☁️ <b>Google Drive:</b> connect Google (above) to also keep backups in your Drive</li>');
+  } else if (b.scriptOutdated) {
+    lines.push('<li class="bad">⚠️ <b>Google:</b> your Google script needs a quick update to use the newest features. Click “Update Google script”.</li>');
+    showUpdate = true;
   } else if (!s.driveBackup) {
     lines.push('<li>☁️ <b>Google Drive:</b> off</li>');
-  } else if (b.scriptOutdated) {
-    lines.push('<li class="bad">⚠️ <b>Google Drive:</b> your Google script needs a quick update first. Click “Update Google script”.</li>');
-    showUpdate = true;
   } else if (b.driveError) {
     lines.push(`<li class="bad">⚠️ <b>Google Drive:</b> ${h(b.driveError)} <span class="muted">(Jarvis will keep trying every 5 minutes)</span></li>`);
     showUpdate = /permission|authoriz|access/i.test(b.driveError);
@@ -1264,9 +1301,9 @@ function renderBackups() {
     lines.push(`<li>✅ <b>Google Drive:</b> last backup ${timeAgo(b.lastDriveAt)}</li>`);
   }
   $('#backup-status').innerHTML = lines.join('');
-  if (b.scriptOutdated && s.sheetUrl && s.driveBackup && !renderBackups.nudged && !guide) {
+  if (b.scriptOutdated && s.sheetUrl && !renderBackups.nudged && !guide) {
     renderBackups.nudged = true;
-    toast('☁️ One quick step to turn on Google Drive backups', { action: 'Show me', onAction: openScriptUpdateGuide });
+    toast('🔧 One quick step to update your Google connection', { action: 'Show me', onAction: openScriptUpdateGuide });
   }
   $('#drive-backup-row').hidden = !s.sheetUrl;
   $('#script-update').hidden = !showUpdate;
@@ -1353,13 +1390,14 @@ function openScriptUpdateGuide() {
       nextLabel: 'Check it',
       onNext: async (body) => {
         const checks = $('#u-checks', body);
-        checks.innerHTML = '<p>⏳ Saving a backup to Google Drive…</p>';
-        const b = (await api('POST', 'backup/now')).backups || {};
-        if (b.scriptOutdated || b.driveError) {
+        checks.innerHTML = '<p>⏳ Checking your Google script…</p>';
+        try { await api('POST', 'sync/test'); } catch { /* reported below */ }
+        const b = state.settings.driveBackup ? ((await api('POST', 'backup/now')).backups || {}) : (state.backups || {});
+        if (state.backups?.scriptOutdated || b.scriptOutdated || (state.settings.driveBackup && b.driveError)) {
           checks.innerHTML = `<p class="bad">❌ ${h(b.driveError || 'Still the old code.')}</p><p class="muted">Make sure you chose <b>New version</b> before clicking Deploy. Click Back to see the steps.</p>`;
           return false;
         }
-        checks.innerHTML = '<p>✅ All set! Your backups are now saved in Google Drive too.</p>';
+        checks.innerHTML = '<p>✅ All set! Your Google script is up to date.</p>';
         celebrate(checks);
         await new Promise((r) => setTimeout(r, 1200));
         return true;

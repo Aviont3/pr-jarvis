@@ -17,12 +17,14 @@
  * in your Google Drive (one file per day, the last 30 days are kept).
  */
 const TOKEN = 'PASTE_TOKEN_HERE';
+const SCRIPT_VERSION = 3; // Jarvis asks you to update the script when this is behind
 
 const LOG_SHEET = 'Daily Log';
 const TODO_SHEET = 'To-Do';
 const LISTS_SHEET = 'Lists';
 const LOG_HEADERS = ['Date', 'Project', 'Task', 'Work Done', 'Category', 'Time Spent (hrs)', 'Notes / Next Steps', 'Jarvis ID'];
-const TODO_HEADERS = ['Status', 'To-Do', 'Project', 'Due', 'Priority', 'Created', 'Completed', 'Jarvis ID'];
+// Jarvis ID stays in column H (used to find rows); Deleted was added later, in column I.
+const TODO_HEADERS = ['Status', 'To-Do', 'Project', 'Due', 'Priority', 'Created', 'Completed', 'Jarvis ID', 'Deleted'];
 
 function doGet() {
   return ContentService.createTextOutput('Jarvis sync is installed. Jarvis sends data here with POST requests.');
@@ -41,7 +43,7 @@ function doPost(e) {
       const ctx = { ss: ss, index: {}, out: {} };
       (body.ops || []).forEach(function (op) { apply_(ctx, op); });
       SpreadsheetApp.flush();
-      const result = { ok: true, spreadsheet: ss.getName() };
+      const result = { ok: true, spreadsheet: ss.getName(), scriptVersion: SCRIPT_VERSION };
       Object.keys(ctx.out).forEach(function (k) { result[k] = ctx.out[k]; });
       return json_(result);
     } finally {
@@ -79,9 +81,10 @@ function entryRow_(e) {
 }
 
 function todoRow_(t) {
-  return [t.done ? 'Done' : 'Open', t.text || '', t.project || '', toDate_(t.due),
+  return [t.deletedAt ? 'Deleted' : t.done ? 'Done' : 'Open', t.text || '', t.project || '', toDate_(t.due),
     t.priority === 'high' ? 'High' : t.priority === 'low' ? 'Low' : 'Normal',
-    t.createdAt ? new Date(t.createdAt) : '', t.doneAt ? new Date(t.doneAt) : '', t.id];
+    t.createdAt ? new Date(t.createdAt) : '', t.doneAt ? new Date(t.doneAt) : '', t.id,
+    t.deletedAt ? new Date(t.deletedAt) : ''];
 }
 
 // ---------------------------------------------------------------- sheets
@@ -110,9 +113,12 @@ function todoSheet_(ss) {
     sh.setColumnWidth(2, 360);
     sh.hideColumns(8);
     const rule = SpreadsheetApp.newConditionalFormatRule()
-      .whenFormulaSatisfied('=$A2="Done"').setFontColor('#9ca3af').setStrikethrough(true)
+      .whenFormulaSatisfied('=OR($A2="Done",$A2="Deleted")').setFontColor('#9ca3af').setStrikethrough(true)
       .setRanges([sh.getRange('A2:G')]).build();
     sh.setConditionalFormatRules([rule]);
+  }
+  if (sh.getRange(1, 9).getValue() !== 'Deleted') {
+    sh.getRange(1, 9).setValue('Deleted').setFontWeight('bold').setBackground('#1f2937').setFontColor('#ffffff');
   }
   return sh;
 }
@@ -153,6 +159,7 @@ function upsert_(ctx, sh, id, row, key) {
   } else {
     sh.getRange(r, 4).setNumberFormat('ddd, mmm d');
     sh.getRange(r, 6, 1, 2).setNumberFormat('mmm d, h:mm am/pm');
+    sh.getRange(r, 9).setNumberFormat('mmm d, h:mm am/pm');
   }
 }
 
