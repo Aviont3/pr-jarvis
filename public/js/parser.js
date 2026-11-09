@@ -191,8 +191,54 @@ export function matchCategoryName(text, categories = []) {
   return best ? best.category : null;
 }
 
-export function parsePeriod(text, fallback = null) {
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const MONTH_RE = '(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\.?';
+const ORD = '(?:st|nd|rd|th)?';
+
+/**
+ * A specific PAST day mentioned in text ("October 19th", "oct 19", "19th of October",
+ * "10/19", "10/19/2025", "last Tuesday", "3 days ago", "the 19th").
+ * Without a year, a date later than today means last year. Returns { date, raw } or null.
+ */
+export function parseSpecificDate(text, now = new Date()) {
   const t = text.toLowerCase();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const past = (m, d, y) => {
+    let dt = new Date(y ?? today.getFullYear(), m, d);
+    if (y == null && dt > today) dt = new Date(today.getFullYear() - 1, m, d);
+    return dt.getMonth() === m ? dt : null; // rejects Feb 31 etc.
+  };
+  const year = (s) => (s ? (+s < 100 ? 2000 + +s : +s) : null);
+  const tries = [
+    [new RegExp(`\\b${MONTH_RE}\\s+(\\d{1,2})${ORD}(?:,?\\s+(\\d{4}))?\\b`), (m) => past(MONTHS.indexOf(m[1].slice(0, 3)), +m[2], year(m[3]))],
+    [new RegExp(`\\b(?:the\\s+)?(\\d{1,2})${ORD}\\s+(?:of\\s+)?${MONTH_RE}(?:,?\\s+(\\d{4}))?\\b`), (m) => past(MONTHS.indexOf(m[2].slice(0, 3)), +m[1], year(m[3]))],
+    [/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/, (m) => past(+m[1] - 1, +m[2], year(m[3]))],
+    [/\b(\d{4})-(\d{2})-(\d{2})\b/, (m) => past(+m[2] - 1, +m[3], +m[1])],
+    [new RegExp(`\\b(\\d+|${Object.keys(WORD_NUM).join('|')})\\s+days?\\s+ago\\b`), (m) => addDays(today, -toNum(m[1]))],
+    [new RegExp(`\\b(?:last|this past|past|on|from)\\s+(${WEEKDAYS.join('|')})\\b`), (m) => {
+      const diff = (today.getDay() - WEEKDAYS.indexOf(m[1]) + 7) % 7 || 7;
+      return addDays(today, -diff);
+    }],
+    [/\b(?:on\s+)?the\s+(\d{1,2})(?:st|nd|rd|th)\b/, (m) => {
+      let dt = new Date(today.getFullYear(), today.getMonth(), +m[1]);
+      if (dt > today) dt = new Date(today.getFullYear(), today.getMonth() - 1, +m[1]);
+      return dt;
+    }],
+  ];
+  for (const [re, fn] of tries) {
+    const m = t.match(re);
+    if (m) {
+      const d = fn(m);
+      if (d && !Number.isNaN(d.getTime())) return { date: isoDate(d), raw: text.substr(m.index, m[0].length) };
+    }
+  }
+  return null;
+}
+
+export function parsePeriod(text, fallback = null, now = new Date()) {
+  const t = text.toLowerCase();
+  const day = parseSpecificDate(text, now);
+  if (day) return `day:${day.date}`;
   if (/\btoday\b|\bso far\b/.test(t)) return 'today';
   if (/\byesterday\b/.test(t)) return 'yesterday';
   if (/\blast week\b/.test(t)) return 'last week';
@@ -343,29 +389,48 @@ export function parseCommand(input, ctx = {}) {
   if (/how (many|much) (hours|time)|\bhours (did|have) i\b|\btotal hours\b|how long (did|have) i (spend|spent|work|worked|been)|\bhours (today|this week|this month|so far)\b/.test(t)) {
     const pm = matchProject(text, projects);
     const cat = pm ? null : matchCategoryName(text, categories);
-    return out('query_hours', { period: parsePeriod(text, 'this week'), project: pm?.project || '', category: cat || '' });
+    return out('query_hours', { period: parsePeriod(text, 'this week', now), project: pm?.project || '', category: cat || '' });
   }
 
   if (/what (did|have) i (do|done|work(ed)? on|get done|accomplish(ed)?)|what have i been (doing|working on)|show (me )?(my )?(log|entries|work)/.test(t)) {
     const pm = matchProject(text, projects);
-    return out('query_log', { period: parsePeriod(text, 'today'), project: pm?.project || '' });
+    return out('query_log', { period: parsePeriod(text, 'today', now), project: pm?.project || '' });
   }
 
   if (/^(?:give me |write |generate |create |make |send |show |build |draft |prepare )?(?:me )?(?:a |an |my |the )?(?:quick )?(?:weekly |monthly |daily |client |project )?(?:status )?(?:report|recap|summary)\b/.test(t)) {
     const pm = matchProject(text, projects);
-    let period = parsePeriod(text, null);
+    let period = parsePeriod(text, null, now);
     if (!period) period = /monthly/.test(t) ? 'this month' : /daily/.test(t) ? 'today' : 'this week';
     return out('report', { period, project: pm?.project || '' });
   }
 
-  // Logging work
+  // Looking up a specific day: "October 19th", "pull up 10/19", "show me last Tuesday",
+  // "everything I worked on Oct 19".
   const dur = parseDuration(text);
   const logLead = /^(?:log|logged|add|record|recorded|track|tracked|i spent|spent|i worked|worked|i did|did|just did|just finished|i just)\b/i;
+  const askedDay = parseSpecificDate(text, now);
+  if (askedDay && !dur && !logLead.test(text)) {
+    const rest = removeRaw(text, askedDay.raw).toLowerCase().replace(/[^a-z ]/g, ' ').trim();
+    const lookup = /\b(show|pull|open|see|view|find|look|list|get|what|everything|anything|work|worked|did|do|done|happened|day|log)\b/.test(rest);
+    if (lookup || !rest || /^(on|for|from)$/.test(rest)) {
+      const pm = matchProject(text, projects);
+      return out('query_log', { period: `day:${askedDay.date}`, project: pm?.project || '' });
+    }
+  }
+
+  // Logging work (optionally for a past day: "yesterday I spent…", "log 1 hour on Oct 19 …")
   if (logLead.test(text) || dur) {
     let body = text.replace(/^(?:log|logged|add|record|recorded|track|tracked)\b\s*(?:that\s+)?(?:i\s+)?/i, '');
     const { body: b2, notes } = splitNotes(body);
     body = b2;
     if (dur) body = removeRaw(body, dur.raw);
+    let date = '';
+    const ydM = body.match(/\b(?:yesterday|last night)\b/i);
+    if (ydM) { date = isoDate(addDays(now, -1)); body = removeRaw(body, ydM[0]); }
+    else {
+      const sd = parseSpecificDate(body, now);
+      if (sd) { date = sd.date; body = removeRaw(body, sd.raw); }
+    }
     const pm = matchProject(body, projects);
     if (pm?.raw) {
       // Drop the project name only where it labels the work ("on Acme:", "for Acme"),
@@ -389,6 +454,7 @@ export function parseCommand(input, ctx = {}) {
     if (!dur && !workDone) return out('unknown');
     return out('log', {
       hours: dur?.hours ?? null,
+      date,
       project: pm?.project || '',
       workDone,
       task: shortTask(workDone),

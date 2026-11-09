@@ -195,6 +195,12 @@ function jarvisSay(res, speak = true) {
   el.innerHTML = html;
   if (res.card?.kind === 'entry') el.append(entryCard(res.card.entry));
   if (res.card?.kind === 'report') el.append(reportCard(res.card.text));
+  if (res.card?.kind === 'day') {
+    const b = Object.assign(document.createElement('button'), { className: 'btn ghost small', textContent: '📒 Open this day in My Work' });
+    b.style.marginTop = '8px';
+    b.onclick = () => openDay(res.card.date);
+    el.append(b);
+  }
   $('#chat').append(el);
   if (res.saved || res.celebrate) { celebrate(el); if (res.saved) toast(cheer()); }
   retireStaleCards();
@@ -328,19 +334,65 @@ function renderTodos() {
 }
 
 function renderLog() {
-  const range = periodRange($('#log-period').value);
+  const range = periodRange(logPeriod());
+  const isDay = $('#log-period').value === 'day';
+  $('#day-picker').hidden = !isDay;
+  $('#day-copy').hidden = !isDay;
   const q = $('#log-search').value.toLowerCase();
   const es = filterEntries(state.entries, { range, project: $('#log-project').value, category: $('#log-category').value })
     .filter((e) => !q || [e.project, e.task, e.workDone, e.notes, e.category].join(' ').toLowerCase().includes(q))
-    .sort((a, b) => (a.date === b.date ? (a.createdAt < b.createdAt ? 1 : -1) : a.date < b.date ? 1 : -1));
+    .sort((a, b) => (a.date === b.date ? ((a.createdAt < b.createdAt) === isDay ? -1 : 1) : a.date < b.date ? 1 : -1));
   $('#log-body').innerHTML = es.length ? es.map((e) => `
     <tr data-entry="${e.id}" title="Click to change">
-      <td class="nowrap">${fmtDate(e.date)}</td><td>${h(displayProject(e.project))}</td>
+      <td class="nowrap"><button type="button" class="link day-link" data-day="${e.date}" title="See everything from this day">${fmtDate(e.date)}</button></td><td>${h(displayProject(e.project))}</td>
       <td class="wd">${h(e.workDone || e.task)}</td><td>${e.category ? `<span class="tag">${h(e.category)}</span>` : ''}</td>
       <td class="num">${fmtNum(e.hours)}</td><td>${h(e.notes)}</td>
-    </tr>`).join('') : '<tr><td colspan="6" class="empty">Nothing here yet. Try “Everything” in the Show menu, or click “+ Log work”.</td></tr>';
+    </tr>`).join('') : `<tr><td colspan="6" class="empty">${isDay
+      ? `Nothing was logged on ${fmtDate(range.from, true)}. Use ◀ ▶ to look at other days, or click “+ Log work” to add something for this day.`
+      : 'Nothing here yet. Try “Everything” in the Show menu, or click “+ Log work”.'}</td></tr>`;
   $('#log-total').textContent = fmtNum(sum(es, (e) => e.hours));
+
+  // A friendly heading for a single day: date, total, and to-dos finished that day.
+  const heading = $('#log-heading');
+  heading.hidden = !isDay;
+  if (isDay) {
+    const done = state.todos.filter((t) => t.done && (t.doneAt || '').slice(0, 10) === range.from);
+    const dayName = parseIso(range.from).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+    heading.innerHTML = `<h2>📅 ${dayName}</h2>
+      <p>${es.length ? `${es.length} ${es.length === 1 ? 'thing' : 'things'} logged · <b>${fmtHours(sum(es, (e) => e.hours))}</b>` : 'Nothing logged'}${done.length ? ` · ✅ ${done.length} ${done.length === 1 ? 'to-do' : 'to-dos'} finished: ${done.map((t) => h(t.text)).join(', ')}` : ''}</p>`;
+  }
 }
+
+/** The My Work filter as a period: a named range, or "day:YYYY-MM-DD". */
+function logPeriod() {
+  const v = $('#log-period').value;
+  if (v !== 'day') return v;
+  if (!$('#log-day').value) $('#log-day').value = isoDate();
+  return `day:${$('#log-day').value}`;
+}
+
+/** Jump to My Work showing one day. */
+function openDay(date) {
+  $('#log-period').value = 'day';
+  $('#log-day').value = date;
+  $('#log-project').value = '';
+  $('#log-category').value = '';
+  $('#log-search').value = '';
+  show('log');
+}
+
+function stepDay(n) {
+  $('#log-day').value = isoDate(addDays(parseIso(logPeriod().slice(4)), n));
+  renderLog();
+}
+$('#day-prev').onclick = () => stepDay(-1);
+$('#day-next').onclick = () => stepDay(1);
+$('#log-day').onchange = renderLog;
+$('#day-copy').onclick = () => {
+  const r = buildReport(state, { period: logPeriod(), project: $('#log-project').value });
+  navigator.clipboard.writeText(r.text);
+  toast('Day summary copied 📋 Paste it anywhere');
+};
 
 // --- dashboard: single-series bar charts (one hue, no legend needed)
 
@@ -426,7 +478,8 @@ function syncEntryChips() {
 function openEntry(entry = null) {
   editingId = entry?.id || null;
   const f = $('#entry-form');
-  $('#entry-dialog-title').textContent = editingId ? '✏️ Change this entry' : '🌷 Log work';
+  $('#entry-dialog-title').textContent = editingId ? '✏️ Change this entry'
+    : entry?.date && entry.date !== isoDate() ? `🌷 Log work for ${fmtDate(entry.date)}` : '🌷 Log work';
   // New entries: leave the type blank and let Jarvis decide from the words.
   f.category.innerHTML = categoryOptions(entry?.category || '').replace('(none)', '✨ Let Jarvis decide');
   f.date.value = entry?.date || isoDate();
@@ -479,6 +532,8 @@ $('#entry-delete').onclick = async () => {
 };
 
 document.addEventListener('click', (ev) => {
+  const dayBtn = ev.target.closest('[data-day]');
+  if (dayBtn) { openDay(dayBtn.dataset.day); return; }
   const row = ev.target.closest('[data-entry]');
   if (row) openEntry(state.entries.find((e) => e.id === row.dataset.entry));
 });
@@ -710,12 +765,12 @@ document.addEventListener('click', (ev) => { const g = ev.target.closest('[data-
 
 ['#log-period', '#log-project', '#log-category'].forEach((s) => { $(s).onchange = renderLog; });
 $('#log-search').oninput = renderLog;
-$('#log-new').onclick = () => openEntry();
+$('#log-new').onclick = () => openEntry($('#log-period').value === 'day' ? { date: logPeriod().slice(4) } : null);
 $('#quick-log-btn').onclick = () => openEntry();
 ['#cat-scope', '#proj-scope', '#report-period', '#report-project'].forEach((s) => { $(s).onchange = renderDashboard; });
 $('#report-copy').onclick = () => { navigator.clipboard.writeText($('#report-text').textContent); toast('Report copied'); };
 $('#export-csv').onclick = () => {
-  const range = periodRange($('#log-period').value);
+  const range = periodRange(logPeriod());
   const es = filterEntries(state.entries, { range, project: $('#log-project').value, category: $('#log-category').value });
   const blob = new Blob([toCsv(es)], { type: 'text/csv' });
   const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `work-log-${isoDate()}.csv` });

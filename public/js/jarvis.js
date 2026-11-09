@@ -18,7 +18,7 @@ export const HELP = {
     ] },
     { heading: 'Timer', items: ['"Start working on Acme press release"', '"Stop" / "Done"', '"What am I working on?"', '"Cancel timer"'] },
     { heading: 'To-dos', items: ['"Add to-do: follow up with Axios Friday"', '"Remind me to send the recap tomorrow, urgent"', '"What\'s on my list?"', '"Check off follow up with Axios"'] },
-    { heading: 'Questions & reports', items: ['"How many hours on Acme this month?"', '"What did I do yesterday?"', '"Weekly report" / "Report for Nike last week"'] },
+    { heading: 'Questions & reports', items: ['"How many hours on Acme this month?"', '"What did I do yesterday?"', '"What did I do on October 19th?"', '"Weekly report" / "Report for Nike last week"'] },
     { heading: 'Calendar', items: ['"What meetings do I have today?"', '"When\'s my next meeting?"', '"Log my meetings"', '"Log the Acme check-in meeting"'] },
     { heading: 'Daily rhythm', items: ['"Morning brief"', '"Wrap up my day"'] },
   ],
@@ -59,7 +59,7 @@ export class Jarvis {
   newEntry(fields) {
     const s = this.getState().settings;
     return {
-      date: isoDate(this.now()),
+      date: fields.date || isoDate(this.now()),
       project: fields.project || '',
       task: fields.task || shortTask(fields.workDone || ''),
       workDone: fields.workDone || fields.task || '',
@@ -73,6 +73,7 @@ export class Jarvis {
     const bits = [fmtHours(e.hours)];
     if (e.project) bits.push(`on ${displayProject(e.project)}`);
     if (e.category) bits.push(`under ${e.category}`);
+    if (e.date && e.date !== isoDate(this.now())) bits.push(`for ${fmtDate(e.date)}`);
     return bits.join(' ');
   }
 
@@ -175,7 +176,10 @@ export class Jarvis {
       case 'wrapup': return wrapUp(state, now);
       case 'todo_list': return answerTodos(state, now);
       case 'query_hours': return answerHours(state, cmd, now);
-      case 'query_log': return answerLog(state, cmd, now);
+      case 'query_log': {
+        const r = answerLog(state, cmd, now);
+        return cmd.period?.startsWith('day:') ? { ...r, card: { kind: 'day', date: cmd.period.slice(4) } } : r;
+      }
       case 'report': {
         const r = buildReport(state, cmd, now);
         return { ...r, card: { kind: 'report', text: r.text, title: r.title } };

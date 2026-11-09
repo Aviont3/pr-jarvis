@@ -419,3 +419,12 @@ dialog.help { width: min(640px, 94vw); }
   .adv-grid, #help-commands { grid-template-columns: 1fr; }
   .icon-btn span { display: none; }
 }
+
+/* ---------------------------------------------------------------- a specific day */
+.day-picker { display: inline-flex; align-items: flex-end; gap: 6px; }
+.day-picker .btn.small { padding: 7px 10px; }
+.log-heading { background: linear-gradient(135deg, #ece5fb, #fff); border: 1px solid var(--border); border-radius: 18px; padding: 12px 16px; margin-bottom: 12px; }
+.log-heading h2 { margin: 0 0 2px; }
+.log-heading p { margin: 0; color: var(--text-secondary); }
+.day-link { padding: 0; font-weight: 600; color: var(--text-primary); text-decoration: underline dotted var(--pink); text-underline-offset: 3px; }
+.day-link:hover { color: var(--pink); }

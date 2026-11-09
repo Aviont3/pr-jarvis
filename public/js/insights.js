@@ -286,16 +286,37 @@ export function answerHours(state, { period = 'this week', project = '', categor
 
 export function answerLog(state, { period = 'today', project = '' }, now = new Date()) {
   const range = periodRange(period, now);
-  const es = filterEntries(state.entries, { range, project }).sort((a, b) => (a.date < b.date ? -1 : 1));
+  const es = filterEntries(state.entries, { range, project })
+    .sort((a, b) => (a.date === b.date ? ((a.createdAt || '') < (b.createdAt || '') ? -1 : 1) : a.date < b.date ? -1 : 1));
   const what = project ? ` on ${displayProject(project)}` : '';
-  if (!es.length) return { title: `Work ${range.label}${what}`, speech: `Nothing logged${what} ${range.label}.`, sections: [] };
-  const multiDay = range.from !== range.to;
-  const items = es.map((e) => `${multiDay ? `${fmtDate(e.date)} · ` : ''}${project ? '' : `${displayProject(e.project)}: `}${e.workDone || e.task} (${fmtHours(e.hours)})`);
-  const top = es.slice(-3).map((e) => e.task || e.workDone);
+  const singleDay = range.from === range.to;
+  const title = singleDay && range.label.startsWith('on ')
+    ? `${fmtDate(range.from, true)}${what}`
+    : `Work ${range.label}${what}`;
+  const finished = state.todos.filter((t) => t.done && t.doneAt && inRange(t.doneAt.slice(0, 10), range) && (!project || t.project === project));
+  const sections = [];
+  if (es.length) {
+    const items = es.map((e) => `${singleDay ? '' : `${fmtDate(e.date)} · `}${project ? '' : `${displayProject(e.project)}: `}${e.workDone || e.task} (${fmtHours(e.hours)})`);
+    sections.push({ heading: `${es.length} ${es.length === 1 ? 'entry' : 'entries'} · ${fmtHours(sum(es, (e) => e.hours))}`, items });
+    if (!project && singleDay) {
+      const byProj = hoursBy(es, 'project');
+      if (byProj.length > 1) sections.push({ heading: 'By project', items: byProj.map((p) => `${displayProject(p.key)}: ${fmtHours(p.hours)}`) });
+    }
+  }
+  if (finished.length) sections.push({ heading: 'To-dos finished', items: finished.map((t) => t.text) });
+  const When = range.label[0].toUpperCase() + range.label.slice(1);
+  if (!es.length) {
+    return {
+      title,
+      speech: `Nothing was logged${what} ${range.label}.${finished.length ? ` You did finish ${finished.length} ${finished.length === 1 ? 'to-do' : 'to-dos'}.` : ''}`,
+      sections,
+    };
+  }
+  const top = es.slice(0, 3).map((e) => e.task || e.workDone);
   return {
-    title: `Work ${range.label}${what}`,
-    speech: `${range.label[0].toUpperCase() + range.label.slice(1)} you logged ${es.length} ${es.length === 1 ? 'entry' : 'entries'}${what}, ${fmtHours(sum(es, (e) => e.hours))} in total. Including: ${list(top, 3)}.`,
-    sections: [{ heading: `${es.length} entries`, items }],
+    title,
+    speech: `${When} you logged ${es.length} ${es.length === 1 ? 'entry' : 'entries'}${what}, ${fmtHours(sum(es, (e) => e.hours))} in total. Including: ${list(top, 3)}.`,
+    sections,
   };
 }
 
@@ -325,7 +346,8 @@ export function buildReport(state, { period = 'this week', project = '' } = {}, 
   const name = state.settings?.userName ? ` · ${state.settings.userName}` : '';
   const span = range.label === 'all time' ? 'All time' :
     range.from === range.to ? fmtDate(range.from, true) : `${fmtDate(range.from)} – ${fmtDate(range.to, true)}`;
-  const kind = { today: 'Daily', yesterday: 'Daily', 'this week': 'Weekly', 'last week': 'Weekly', 'this month': 'Monthly', 'last month': 'Monthly' }[period] || '';
+  const kind = String(period).startsWith('day:') ? 'Daily'
+    : { today: 'Daily', yesterday: 'Daily', 'this week': 'Weekly', 'last week': 'Weekly', 'this month': 'Monthly', 'last month': 'Monthly' }[period] || '';
   const title = `${project ? `${displayProject(project)}: ` : ''}${kind ? `${kind} ` : ''}Work Report`;
 
   const L = [];

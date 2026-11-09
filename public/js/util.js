@@ -36,6 +36,12 @@ export function startOfMonth(d = new Date()) {
 /** Named period -> { from, to, label } as ISO strings (inclusive). */
 export function periodRange(period, now = new Date()) {
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  // A single specific day: "day:2026-10-19"
+  if (typeof period === 'string' && period.startsWith('day:')) {
+    const d = period.slice(4);
+    const label = d === isoDate(today) ? 'today' : d === isoDate(addDays(today, -1)) ? 'yesterday' : `on ${fmtDate(d)}`;
+    return { from: d, to: d, label };
+  }
   switch (period) {
     case 'today':
       return { from: isoDate(today), to: isoDate(today), label: 'today' };

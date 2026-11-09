@@ -46,11 +46,13 @@ Or tap the flower 🌼 and just talk, in your own words:
 | “What's on my list?” | reads your to-dos |
 | “What meetings do I have today?” / “Log my meetings” | reads or logs your calendar |
 | “How many hours on Acme this month?” | tells you |
+| “What did I do on October 19th?” / “Pull up last Tuesday” | shows everything from that day, with a button to open it in My Work |
+| “Yesterday I spent 2 hours on the Acme release” | logs work for a past day |
 | “Weekly report” | writes a report you can copy into an email |
 | “Good morning” / “Wrap up my day” | your daily plan / end-of-day summary |
 
 **The other pages:**
-- **📒 My Work:** everything you've logged. Click any row to change it. **⬇️ Download** opens it in Excel or Numbers.
+- **📒 My Work:** everything you've logged. Click any row to change it. To see one day, choose **Show → 📅 A specific day…** and pick a date (◀ ▶ step a day at a time), or click any date in the list. **📋 Copy summary** copies that day's work, and **⬇️ Download** opens it in Excel or Numbers.
 - **✅ To-Dos:** your full list. Tick the circle when something's done.
 - **📊 Insights:** charts of your time and a ready-to-send report.
 - **⚙️ Settings:** your name, projects, Google connection and voice. Changes save automatically.
