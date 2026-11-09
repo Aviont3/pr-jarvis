@@ -368,7 +368,7 @@ export function parseCommand(input, ctx = {}) {
   }
 
   // To-dos
-  if (/^(?:complete|completed|check off|checked off|cross off|tick off|mark)\s+/i.test(t) ||
+  if (/^(?:complete|completed|check off|checked off|cross off|tick off)\s+/i.test(t) ||
       /\b(as )?(done|complete|completed|finished)$/.test(t) && /^(mark|set)\b/.test(t)) {
     const q = text
       .replace(/^(?:complete|completed|check off|checked off|cross off|tick off|mark|set)\s+/i, '')
@@ -390,6 +390,17 @@ export function parseCommand(input, ctx = {}) {
   if (moveM) {
     const due = parseDue(moveM[2], now);
     if (due) return out('todo_due', { query: tidy(moveM[1]), due: due.due });
+  }
+
+  // Changing how urgent a to-do is:
+  //   "make follow up with Axios urgent", "mark the venue as low priority", "the recap isn't urgent"
+  const priM =
+    text.match(/^(?:make|mark|set|flag|change)\s+(?:the\s+)?(?:to-?do\s+)?(.+?)\s+(?:as\s+|to\s+)?(urgent|important|high priority|top priority|low priority|not urgent|normal(?: priority)?|regular(?: priority)?)$/i) ||
+    text.match(/^(?:the\s+)?(?:to-?do\s+)?(.+?)\s+(?:is|isn'?t|is not)\s+(urgent|not urgent|low priority|high priority)$/i);
+  if (priM) {
+    const negated = /\b(isn'?t|is not)\b/i.test(text) || /^not urgent$/i.test(priM[2]);
+    const level = negated ? 'normal' : /urgent|important|high|top/i.test(priM[2]) ? 'high' : /low/i.test(priM[2]) ? 'low' : 'normal';
+    return out('todo_priority', { query: tidy(priM[1]), priority: level });
   }
 
   // Changing a to-do's project:
@@ -421,9 +432,21 @@ export function parseCommand(input, ctx = {}) {
     });
   }
 
-  if (/(what'?s|what is|read( me)?|show( me)?|list|open|check)\s+(on\s+)?(my|the)\s+(to-?\s?do|todo|task)?\s*(list|items|tasks|to-?\s?dos)|\bmy (to-?\s?dos|todos|tasks)\b|what do i (have|need|still need) to do|what'?s (due|overdue|left)|\bto-?\s?do list\b|anything (due|overdue)/.test(t)) {
+  if (/(what'?s|what is|read( me)?|show( me)?|list|open|check)\s+(on\s+)?(my|the)\s+(to-?\s?do|todo|task)?\s*(list|items|tasks|to-?\s?dos)|\bmy (to-?\s?dos|todos|tasks)\b|what do i (have|need|still need) to do|what'?s (due|overdue|left|coming up|urgent)|\bto-?\s?do list\b|anything (due|overdue|urgent|coming up)|^(?:what'?s\s+|show(?: me)?\s+|list\s+|any\s+)?(?:my\s+)?(?:upcoming|coming up)\b|\bwhat (is|are) (due|urgent)\b|\b(my|what|any) deadlines\b/.test(t)) {
     const pm = matchProject(text, projects);
-    return out('todo_list', { project: pm?.project || '' });
+    // Which due dates: "due tomorrow", "this week", "next week", "next 10 days", "coming up", "overdue"
+    let window = '';
+    const nDays = t.match(/\bnext\s+(\d+|seven|ten|fourteen|thirty)\s+days\b/);
+    if (/\boverdue\b/.test(t)) window = 'overdue';
+    else if (/\btomorrow\b/.test(t)) window = 'tomorrow';
+    else if (/\btoday\b/.test(t)) window = 'today';
+    else if (/\bnext week\b/.test(t)) window = 'next week';
+    else if (/\bthis week\b/.test(t)) window = 'this week';
+    else if (/\bthis month\b/.test(t)) window = 'this month';
+    else if (nDays) window = String({ seven: 7, ten: 10, fourteen: 14, thirty: 30 }[nDays[1]] || Number(nDays[1]));
+    else if (/\b(coming up|upcoming|soon)\b/.test(t)) window = '7';
+    const urgent = /\b(urgent|important|high priority)\b/.test(t);
+    return out('todo_list', { project: pm?.project || '', window, urgent });
   }
 
   // Questions

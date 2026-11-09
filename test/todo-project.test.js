@@ -41,6 +41,6 @@ test('Jarvis files a to-do under a project and lists by project', async () => {
   assert.match((await j.handle('put follow up with Axios under Acme')).speech, /now under Acme Corp Rebrand/);
   assert.equal(state.todos[0].project, 'Acme Corp Rebrand');
   const r = await j.handle("what's on my list for Nike");
-  assert.match(r.speech, /1 open item for Nike Holiday/);
+  assert.match(r.speech, /1 to-do for Nike Holiday/);
   assert.match((await j.handle("what's on my list for Spring Launch")).speech, /list for Spring Product Launch is clear/);
 });

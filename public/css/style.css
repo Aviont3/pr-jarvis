@@ -494,3 +494,24 @@ a.btn.primary { color: #fff; }
 .todo-filter { margin: 0 0 14px; }
 .todo-filter button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 .todo-filter button .n { opacity: .7; font-weight: 400; margin-left: 2px; }
+
+/* ---------------------------------------------------------------- urgency & due filters */
+.pri-btn { border: 1px dashed transparent; background: none; padding: 0 4px; border-radius: 8px; cursor: pointer; font: inherit; color: var(--text-muted); }
+.pri-btn:hover { border-color: var(--pink); background: #fff; color: var(--text-primary); }
+.pri-btn.pri-high { color: var(--danger); font-weight: 700; }
+.pri-btn.pri-normal { opacity: .7; }
+.todo-list li:hover .pri-btn.pri-normal { opacity: 1; }
+.pri-pop { width: 240px; }
+.pri-pop-list { display: grid; gap: 6px; }
+.pri-pop-list button { border: 1.5px solid var(--border); background: #fff; border-radius: 12px; padding: 8px 12px; cursor: pointer; font-weight: 700; font-size: 14px; text-align: left; display: flex; flex-direction: column; }
+.pri-pop-list button small { color: var(--text-muted); font-weight: 500; font-size: 11px; }
+.pri-pop-list button:hover { border-color: var(--pink); }
+.pri-pop-list button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.pri-pop-list button.on small { color: #eafff1; }
+#todo-due-filter { margin-top: -6px; }
+#todo-due-filter button.warn:not(.on) { color: var(--danger); }
+.urgent-toggle { margin-left: 8px; }
+.urgent-toggle.on { background: var(--danger) !important; border-color: var(--danger) !important; color: #fff !important; }
+.todo-list li.date-head { padding: 8px 6px 2px; font-size: 12px; font-weight: 800; color: var(--pink); text-transform: uppercase; letter-spacing: .05em; background: none !important; }
+.todo-col.empty-col { grid-column: 1 / -1; text-align: center; }
+#todo-due-filter button.zero:not(.on) { opacity: .5; }

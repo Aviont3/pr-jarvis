@@ -320,11 +320,36 @@ export function answerLog(state, { period = 'today', project = '' }, now = new D
   };
 }
 
-export function answerTodos(state, now = new Date(), project = '') {
-  const b = todoBuckets(project ? state.todos.filter((t) => t.project === project) : state.todos, now);
-  const forWhat = project ? ` for ${displayProject(project)}` : '';
-  const title = `To-do list${forWhat}`;
-  if (!b.open.length) return { title, speech: `Your to-do list${forWhat} is clear. Nice.`, sections: [] };
+/** Due-date windows for to-do questions: 'today', 'tomorrow', 'this week', 'next week', 'this month', 'overdue', or a number of days. */
+export function dueWindow(window, now = new Date()) {
+  const t = isoDate(now);
+  const d = (n) => isoDate(addDays(now, n));
+  const sunday = d((7 - now.getDay()) % 7);
+  switch (window) {
+    case '': case undefined: return null;
+    case 'overdue': return { from: '0000-01-01', to: d(-1), label: 'overdue' };
+    case 'today': return { from: t, to: t, label: 'due today' };
+    case 'tomorrow': return { from: d(1), to: d(1), label: 'due tomorrow' };
+    case 'this week': return { from: '0000-01-01', to: sunday, label: 'due this week' };
+    case 'next week': return { from: isoDate(addDays(parseIso(sunday), 1)), to: isoDate(addDays(parseIso(sunday), 7)), label: 'due next week' };
+    case 'this month': return { from: '0000-01-01', to: isoDate(new Date(now.getFullYear(), now.getMonth() + 1, 0)), label: 'due this month' };
+    default: return { from: '0000-01-01', to: d(Number(window) || 7), label: `due in the next ${Number(window) || 7} days` };
+  }
+}
+
+export function answerTodos(state, now = new Date(), project = '', { window = '', urgent = false } = {}) {
+  const range = dueWindow(window, now);
+  const pick = state.todos.filter((t) => (!project || t.project === project)
+    && (!urgent || t.priority === 'high')
+    && (!range || (t.due && t.due >= range.from && t.due <= range.to)));
+  const b = todoBuckets(pick, now);
+  const forWhat = `${urgent ? ' urgent' : ''}`;
+  const scope = `${project ? ` for ${displayProject(project)}` : ''}${range ? ` ${range.label}` : ''}`;
+  const title = `${urgent ? 'Urgent to-dos' : 'To-do list'}${scope}`;
+  if (!b.open.length) {
+    const what = urgent ? 'Nothing urgent' : range ? 'Nothing' : 'Your to-do list';
+    return { title, speech: range || urgent ? `${what}${scope}. 🌼` : `${what}${scope} is clear. Nice.`, sections: [] };
+  }
   const sections = [];
   if (b.overdue.length) sections.push({ heading: 'Overdue', items: b.overdue.map((x) => todoLine(x, now)) });
   if (b.today.length) sections.push({ heading: 'Due today', items: b.today.map((x) => todoLine(x, now)) });
@@ -333,7 +358,7 @@ export function answerTodos(state, now = new Date(), project = '') {
   const first = [...b.overdue, ...b.today, ...b.upcoming, ...b.someday].slice(0, 3).map((x) => x.text);
   return {
     title,
-    speech: `You have ${b.open.length} open ${b.open.length === 1 ? 'item' : 'items'}${forWhat}${b.overdue.length ? `, ${b.overdue.length} overdue` : ''}. ${first.length > 1 ? 'First up' : 'It is'}: ${list(first, 3)}.`,
+    speech: `You have ${b.open.length}${forWhat} ${b.open.length === 1 ? 'to-do' : 'to-dos'}${scope}${!range && b.overdue.length ? `, ${b.overdue.length} overdue` : ''}. ${first.length > 1 ? 'First up' : 'It is'}: ${list(first, 3)}.`,
     sections,
   };
 }

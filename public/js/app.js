@@ -352,7 +352,9 @@ function todoLi(td) {
     : `<button type="button" class="due-btn ${td.due ? '' : 'empty'}" data-due-edit="${td.id}" title="Change the due date">📅 ${td.due ? dueMeta(td) : 'Add due date'}</button>`;
   const proj = td.done ? (td.project && h(displayProject(td.project)))
     : `<button type="button" class="proj-btn ${td.project ? '' : 'empty'}" data-proj-edit="${td.id}" title="Change the project">🌷 ${td.project ? h(displayProject(td.project)) : 'Add project'}</button>`;
-  const meta = [due, proj, td.priority === 'high' && 'High priority'].filter(Boolean).join(' · ');
+  const pri = td.done ? (td.priority === 'high' && '🔥 Urgent')
+    : `<button type="button" class="pri-btn pri-${td.priority || 'normal'}" data-pri-edit="${td.id}" title="Change how urgent this is">${PRIORITY_LABEL[td.priority || 'normal']}</button>`;
+  const meta = [due, proj, pri].filter(Boolean).join(' · ');
   const dates = [stamp('Added', td.createdAt), td.done && stamp('Completed', td.doneAt, 'done-stamp')].filter(Boolean).join(' · ');
   return `<li class="${td.done ? 'done' : ''} ${td.priority === 'high' ? 'high' : ''}" data-todo="${td.id}">
     <input type="checkbox" ${td.done ? 'checked' : ''} aria-label="Done">
@@ -420,6 +422,53 @@ document.addEventListener('click', (ev) => {
 }, true);
 document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && !duePop.hidden) closeDuePicker(); });
 window.addEventListener('scroll', () => { if (!duePop.hidden) closeDuePicker(); }, { passive: true });
+
+// ---- Urgency picker for to-dos
+
+const PRIORITY_LABEL = { high: '🔥 Urgent', normal: '⚑ Normal', low: '🐢 Low' };
+const priPop = Object.assign(document.createElement('div'), { className: 'due-pop pri-pop', hidden: true });
+document.body.append(priPop);
+let priPopFor = null;
+
+function openPriorityPicker(btn, td) {
+  priPopFor = td.id;
+  const cur = td.priority || 'normal';
+  priPop.innerHTML = `
+    <div class="due-pop-title">How urgent is it?</div>
+    <div class="pri-pop-list">
+      <button type="button" data-set-pri="high" class="${cur === 'high' ? 'on' : ''}">🔥 Urgent<small>Shows first, marked in red</small></button>
+      <button type="button" data-set-pri="normal" class="${cur === 'normal' ? 'on' : ''}">⚑ Normal</button>
+      <button type="button" data-set-pri="low" class="${cur === 'low' ? 'on' : ''}">🐢 Low<small>Whenever there's time</small></button>
+    </div>`;
+  priPop.hidden = false;
+  const r = btn.getBoundingClientRect();
+  const w = priPop.offsetWidth;
+  const ht = priPop.offsetHeight;
+  priPop.style.left = `${Math.min(window.innerWidth - w - 12, Math.max(12, r.left))}px`;
+  priPop.style.top = `${r.bottom + 8 + ht < window.innerHeight ? r.bottom + 6 : Math.max(12, r.top - ht - 6)}px`;
+}
+function closePriorityPicker() { priPop.hidden = true; priPopFor = null; }
+priPop.addEventListener('click', async (ev) => {
+  const b = ev.target.closest('[data-set-pri]');
+  if (!b || !priPopFor) return;
+  const id = priPopFor;
+  const td = state.todos.find((x) => x.id === id);
+  closePriorityPicker();
+  await actions.updateTodo(id, { priority: b.dataset.setPri });
+  toast(`“${shorten(td?.text, 30)}” is now ${{ high: 'urgent 🔥', normal: 'normal priority', low: 'low priority 🐢' }[b.dataset.setPri]}`);
+});
+document.addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-pri-edit]');
+  if (b) {
+    ev.stopPropagation();
+    const td = state.todos.find((x) => x.id === b.dataset.priEdit);
+    if (priPopFor === td?.id) closePriorityPicker(); else if (td) openPriorityPicker(b, td);
+    return;
+  }
+  if (!priPop.hidden && !priPop.contains(ev.target)) closePriorityPicker();
+}, true);
+document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && !priPop.hidden) closePriorityPicker(); });
+window.addEventListener('scroll', () => { if (!priPop.hidden) closePriorityPicker(); }, { passive: true });
 
 // ---- Project picker for to-dos
 
@@ -505,6 +554,55 @@ const NO_PROJECT = '__none__';
 let todoFilter = '';
 const matchesFilter = (td) => !todoFilter || (todoFilter === NO_PROJECT ? !td.project : td.project === todoFilter);
 
+// Due-date filter and "urgent only" switch for open to-dos.
+let dueFilter = '';
+let urgentOnly = false;
+const DUE_FILTERS = [
+  ['', 'All'], ['overdue', '⚠️ Overdue'], ['today', 'Today'], ['tomorrow', 'Tomorrow'],
+  ['7', 'Next 7 days'], ['30', 'Next 30 days'], ['none', 'No date'],
+];
+function matchesDue(td, f = dueFilter) {
+  const t = isoDate();
+  if (!f) return true;
+  if (f === 'none') return !td.due;
+  if (!td.due) return false;
+  if (f === 'overdue') return td.due < t;
+  if (f === 'today') return td.due === t;
+  if (f === 'tomorrow') return td.due === isoDate(addDays(new Date(), 1));
+  return td.due >= t && td.due <= isoDate(addDays(new Date(), Number(f))); // next N days
+}
+const matchesUrgent = (td) => !urgentOnly || td.priority === 'high';
+
+function renderDueFilter() {
+  const open = state.todos.filter((t) => !t.done && matchesFilter(t));
+  const chips = DUE_FILTERS.map(([v, label]) => {
+    const n = open.filter((t) => matchesDue(t, v) && matchesUrgent(t)).length;
+    return `<button type="button" data-due-filter="${v}" class="${dueFilter === v ? 'on' : ''} ${v === 'overdue' && n ? 'warn' : ''} ${n ? '' : 'zero'}">${label} <span class="n">${n}</span></button>`;
+  }).join('');
+  const urgentN = open.filter((t) => t.priority === 'high' && matchesDue(t)).length;
+  $('#todo-due-filter').innerHTML = `<span class="chips-label">Due:</span>${chips}
+    <button type="button" class="urgent-toggle ${urgentOnly ? 'on' : ''}" id="urgent-only" aria-pressed="${urgentOnly}">🔥 Urgent only <span class="n">${urgentN}</span></button>`;
+}
+$('#todo-due-filter').onclick = (ev) => {
+  const b = ev.target.closest('[data-due-filter]');
+  if (b) { dueFilter = b.dataset.dueFilter; renderTodos(); return; }
+  if (ev.target.closest('#urgent-only')) { urgentOnly = !urgentOnly; renderTodos(); }
+};
+
+// Urgent first; Upcoming is by date (then urgency) so it can be grouped by day.
+const PRI_RANK = { high: 0, normal: 1, low: 2 };
+const byUrgency = (a, b) => (PRI_RANK[a.priority] ?? 1) - (PRI_RANK[b.priority] ?? 1) || ((a.due || '9') < (b.due || '9') ? -1 : 1);
+const byDate = (a, b) => (a.due < b.due ? -1 : a.due > b.due ? 1 : (PRI_RANK[a.priority] ?? 1) - (PRI_RANK[b.priority] ?? 1));
+
+function upcomingWithHeadings(items) {
+  let last = '';
+  return items.map((td) => {
+    const head = td.due !== last ? `<li class="date-head">${td.due === isoDate(addDays(new Date(), 1)) ? 'Tomorrow · ' : ''}${fmtDate(td.due)}</li>` : '';
+    last = td.due;
+    return head + todoLi(td);
+  }).join('');
+}
+
 function renderTodoFilter() {
   const open = state.todos.filter((t) => !t.done);
   const known = [...new Set([...(state.settings.projects || []), ...open.map((t) => t.project).filter(Boolean)])];
@@ -528,13 +626,20 @@ $('#todo-filter').onclick = (ev) => {
 
 function renderTodos() {
   renderTodoFilter();
-  const b = todoBuckets(state.todos.filter(matchesFilter));
+  renderDueFilter();
+  const filtered = state.todos.filter((t) => matchesFilter(t) && (t.done || (matchesDue(t) && matchesUrgent(t))));
+  const b = todoBuckets(filtered);
+  const filtering = dueFilter || urgentOnly;
   const cols = [
-    ['overdue', 'Overdue', b.overdue], ['today', 'Today', b.today], ['upcoming', 'Upcoming', b.upcoming], ['someday', 'No date', b.someday],
-  ].filter(([k, , items]) => items.length || k === 'today');
-  $('#todo-columns').innerHTML = cols.map(([k, label, items]) => `
+    ['overdue', 'Overdue', b.overdue.sort(byUrgency)], ['today', 'Today', b.today.sort(byUrgency)],
+    ['upcoming', 'Upcoming', b.upcoming.sort(byDate)], ['someday', 'No date', b.someday.sort(byUrgency)],
+  ].filter(([k, , items]) => items.length || (k === 'today' && !filtering));
+  $('#todo-columns').innerHTML = cols.length ? cols.map(([k, label, items]) => `
     <div class="todo-col ${k}"><h3>${label} <span class="n">${items.length}</span></h3>
-    <ul class="todo-list">${items.length ? items.map(todoLi).join('') : '<li class="empty">Nothing here</li>'}</ul></div>`).join('');
+    <ul class="todo-list">${!items.length ? '<li class="empty">Nothing here</li>' : k === 'upcoming' ? upcomingWithHeadings(items) : items.map(todoLi).join('')}</ul></div>`).join('')
+    : `<div class="todo-col empty-col"><p class="empty">No to-dos match. <button type="button" class="link" id="clear-todo-filters">Show all</button></p></div>`;
+  const clear = $('#clear-todo-filters');
+  if (clear) clear.onclick = () => { dueFilter = ''; urgentOnly = false; todoFilter = ''; renderTodos(); };
   const allDone = state.todos.filter((x) => x.done && matchesFilter(x));
   const done = allDone.sort((a, b2) => (a.doneAt < b2.doneAt ? 1 : -1)).slice(0, 100);
   $('#done-count').textContent = `(${allDone.length})`;
