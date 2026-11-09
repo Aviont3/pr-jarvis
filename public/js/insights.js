@@ -320,9 +320,11 @@ export function answerLog(state, { period = 'today', project = '' }, now = new D
   };
 }
 
-export function answerTodos(state, now = new Date()) {
-  const b = todoBuckets(state.todos, now);
-  if (!b.open.length) return { title: 'To-do list', speech: 'Your to-do list is clear. Nice.', sections: [] };
+export function answerTodos(state, now = new Date(), project = '') {
+  const b = todoBuckets(project ? state.todos.filter((t) => t.project === project) : state.todos, now);
+  const forWhat = project ? ` for ${displayProject(project)}` : '';
+  const title = `To-do list${forWhat}`;
+  if (!b.open.length) return { title, speech: `Your to-do list${forWhat} is clear. Nice.`, sections: [] };
   const sections = [];
   if (b.overdue.length) sections.push({ heading: 'Overdue', items: b.overdue.map((x) => todoLine(x, now)) });
   if (b.today.length) sections.push({ heading: 'Due today', items: b.today.map((x) => todoLine(x, now)) });
@@ -330,8 +332,8 @@ export function answerTodos(state, now = new Date()) {
   if (b.someday.length) sections.push({ heading: 'No date', items: b.someday.map((x) => todoLine(x, now)) });
   const first = [...b.overdue, ...b.today, ...b.upcoming, ...b.someday].slice(0, 3).map((x) => x.text);
   return {
-    title: 'To-do list',
-    speech: `You have ${b.open.length} open ${b.open.length === 1 ? 'item' : 'items'}${b.overdue.length ? `, ${b.overdue.length} overdue` : ''}. ${first.length > 1 ? 'First up' : 'It is'}: ${list(first, 3)}.`,
+    title,
+    speech: `You have ${b.open.length} open ${b.open.length === 1 ? 'item' : 'items'}${forWhat}${b.overdue.length ? `, ${b.overdue.length} overdue` : ''}. ${first.length > 1 ? 'First up' : 'It is'}: ${list(first, 3)}.`,
     sections,
   };
 }

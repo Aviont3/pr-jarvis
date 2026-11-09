@@ -18,7 +18,7 @@ export const HELP = {
     ] },
     { heading: 'Fix mistakes', items: ['"Change that to 45 minutes"', '"Change that to Nike Holiday"', '"Edit my last entry"', '"Delete my last entry" / "Undo that"'] },
     { heading: 'Timer', items: ['"Start working on Acme press release"', '"Stop" / "Done"', '"What am I working on?"', '"Cancel timer"'] },
-    { heading: 'To-dos', items: ['"Add to-do: follow up with Axios Friday"', '"Remind me to send the recap tomorrow, urgent"', '"What\'s on my list?"', '"Check off follow up with Axios"', '"Move follow up with Axios to Friday"'] },
+    { heading: 'To-dos', items: ['"Add to-do: follow up with Axios Friday"', '"Remind me to send the recap tomorrow, urgent"', '"What\'s on my list?"', '"Check off follow up with Axios"', '"Move follow up with Axios to Friday"', '"Put the venue under Nike"', '"What\'s on my list for Acme?"'] },
     { heading: 'Questions & reports', items: ['"How many hours on Acme this month?"', '"What did I do yesterday?"', '"What did I do on October 19th?"', '"Weekly report" / "Report for Nike last week"'] },
     { heading: 'Calendar', items: ['"What meetings do I have today?"', '"When\'s my next meeting?"', '"Log my meetings"', '"Log the Acme check-in meeting"'] },
     { heading: 'Daily rhythm', items: ['"Morning brief"', '"Wrap up my day"'] },
@@ -216,7 +216,14 @@ export class Jarvis {
         });
       }
       case 'wrapup': return wrapUp(state, now);
-      case 'todo_list': return answerTodos(state, now);
+      case 'todo_list': return answerTodos(state, now, cmd.project);
+
+      case 'todo_project': {
+        const td = findTodo(state.todos, cmd.query);
+        if (!td) return say(`I couldn't find an open to-do matching "${cmd.query}". Say "what's on my list" to hear them.`);
+        await this.actions.updateTodo(td.id, { project: cmd.project });
+        return say(`Done. "${td.text}" is now under ${displayProject(cmd.project)}.`);
+      }
       case 'query_hours': return answerHours(state, cmd, now);
       case 'query_log': {
         const r = answerLog(state, cmd, now);

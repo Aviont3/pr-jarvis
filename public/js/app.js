@@ -350,7 +350,9 @@ function todoLi(td) {
   // Open to-dos: the due date is a button that opens the date picker.
   const due = td.done ? dueMeta(td)
     : `<button type="button" class="due-btn ${td.due ? '' : 'empty'}" data-due-edit="${td.id}" title="Change the due date">📅 ${td.due ? dueMeta(td) : 'Add due date'}</button>`;
-  const meta = [due, td.project && h(displayProject(td.project)), td.priority === 'high' && 'High priority'].filter(Boolean).join(' · ');
+  const proj = td.done ? (td.project && h(displayProject(td.project)))
+    : `<button type="button" class="proj-btn ${td.project ? '' : 'empty'}" data-proj-edit="${td.id}" title="Change the project">🌷 ${td.project ? h(displayProject(td.project)) : 'Add project'}</button>`;
+  const meta = [due, proj, td.priority === 'high' && 'High priority'].filter(Boolean).join(' · ');
   const dates = [stamp('Added', td.createdAt), td.done && stamp('Completed', td.doneAt, 'done-stamp')].filter(Boolean).join(' · ');
   return `<li class="${td.done ? 'done' : ''} ${td.priority === 'high' ? 'high' : ''}" data-todo="${td.id}">
     <input type="checkbox" ${td.done ? 'checked' : ''} aria-label="Done">
@@ -419,6 +421,63 @@ document.addEventListener('click', (ev) => {
 document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && !duePop.hidden) closeDuePicker(); });
 window.addEventListener('scroll', () => { if (!duePop.hidden) closeDuePicker(); }, { passive: true });
 
+// ---- Project picker for to-dos
+
+const projPop = Object.assign(document.createElement('div'), { className: 'due-pop proj-pop', hidden: true });
+document.body.append(projPop);
+let projPopFor = null;
+
+function openProjectPicker(btn, td) {
+  projPopFor = td.id;
+  const projects = state.settings.projects || [];
+  projPop.innerHTML = `
+    <div class="due-pop-title">🌷 Which project is this for?</div>
+    <div class="proj-pop-list">${projects.map((pr) => `<button type="button" data-set-proj="${h(pr)}" class="${td.project === pr ? 'on' : ''}">${h(displayProject(pr))}</button>`).join('') || '<p class="muted">No projects yet. Add one below.</p>'}</div>
+    <div class="proj-pop-new"><input id="proj-pop-new" placeholder="+ New project…"><button type="button" class="btn primary small" id="proj-pop-add">Add</button></div>
+    <div class="due-pop-foot">${td.project ? '<button type="button" class="link" data-set-proj="">✕ No project</button>' : '<span></span>'}<button type="button" class="link" id="proj-pop-close">Close</button></div>`;
+  projPop.hidden = false;
+  const r = btn.getBoundingClientRect();
+  const w = projPop.offsetWidth;
+  const ht = projPop.offsetHeight;
+  projPop.style.left = `${Math.min(window.innerWidth - w - 12, Math.max(12, r.left))}px`;
+  projPop.style.top = `${r.bottom + 8 + ht < window.innerHeight ? r.bottom + 6 : Math.max(12, r.top - ht - 6)}px`;
+}
+function closeProjectPicker() { projPop.hidden = true; projPopFor = null; }
+
+async function setTodoProject(id, project) {
+  const td = state.todos.find((x) => x.id === id);
+  closeProjectPicker();
+  if (project && !(state.settings.projects || []).includes(project)) {
+    await api('PATCH', 'settings', { projects: [...(state.settings.projects || []), project] }); // new project
+  }
+  await actions.updateTodo(id, { project });
+  toast(project ? `🌷 “${shorten(td?.text, 30)}” is now under ${displayProject(project)}` : `Removed the project from “${shorten(td?.text, 30)}”`);
+}
+function addNewProjectFromPicker() {
+  const name = $('#proj-pop-new').value.trim();
+  if (name && projPopFor) setTodoProject(projPopFor, (state.settings.projects || []).find((p2) => p2.toLowerCase() === name.toLowerCase()) || name);
+}
+projPop.addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-set-proj]');
+  if (b && projPopFor) setTodoProject(projPopFor, b.dataset.setProj);
+  if (ev.target.id === 'proj-pop-add') addNewProjectFromPicker();
+  if (ev.target.id === 'proj-pop-close') closeProjectPicker();
+});
+projPop.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && ev.target.id === 'proj-pop-new') { ev.preventDefault(); addNewProjectFromPicker(); } });
+document.addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-proj-edit]');
+  if (b) {
+    ev.stopPropagation();
+    const td = state.todos.find((x) => x.id === b.dataset.projEdit);
+    closeDuePicker();
+    if (projPopFor === td?.id) closeProjectPicker(); else if (td) openProjectPicker(b, td);
+    return;
+  }
+  if (!projPop.hidden && !projPop.contains(ev.target)) closeProjectPicker();
+}, true);
+document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && !projPop.hidden) closeProjectPicker(); });
+window.addEventListener('scroll', () => { if (!projPop.hidden) closeProjectPicker(); }, { passive: true });
+
 function deletedTodoLi(td) {
   const dates = [stamp('Added', td.createdAt), td.doneAt && stamp('Completed', td.doneAt, 'done-stamp'), stamp('Deleted', td.deletedAt, 'del-stamp')].filter(Boolean).join(' · ');
   return `<li class="deleted" data-deleted-todo="${td.id}">
@@ -441,18 +500,46 @@ function renderToday() {
   badge.textContent = urgent;
 }
 
+// Which project the To-Dos page is showing: '' = all, NO_PROJECT = to-dos without one.
+const NO_PROJECT = '__none__';
+let todoFilter = '';
+const matchesFilter = (td) => !todoFilter || (todoFilter === NO_PROJECT ? !td.project : td.project === todoFilter);
+
+function renderTodoFilter() {
+  const open = state.todos.filter((t) => !t.done);
+  const known = [...new Set([...(state.settings.projects || []), ...open.map((t) => t.project).filter(Boolean)])];
+  if (todoFilter && todoFilter !== NO_PROJECT && !known.includes(todoFilter)) todoFilter = '';
+  const count = (fn) => open.filter(fn).length;
+  const chip = (value, label, n) => `<button type="button" data-todo-filter="${h(value)}" class="${todoFilter === value ? 'on' : ''}">${label} <span class="n">${n}</span></button>`;
+  const noneCount = count((t) => !t.project);
+  $('#todo-filter').innerHTML = `<span class="chips-label">Show:</span>${chip('', 'All', open.length)}${
+    known.map((pr) => chip(pr, `🌷 ${h(displayProject(pr))}`, count((t) => t.project === pr))).join('')}${
+    noneCount ? chip(NO_PROJECT, 'No project', noneCount) : ''}`;
+  // New to-dos go into the project being shown.
+  if (todoFilter && todoFilter !== NO_PROJECT) $('#todo-project').value = todoFilter;
+}
+$('#todo-filter').onclick = (ev) => {
+  const b = ev.target.closest('[data-todo-filter]');
+  if (!b) return;
+  todoFilter = b.dataset.todoFilter;
+  if (!todoFilter || todoFilter === NO_PROJECT) $('#todo-project').value = '';
+  renderTodos();
+};
+
 function renderTodos() {
-  const b = todoBuckets(state.todos);
+  renderTodoFilter();
+  const b = todoBuckets(state.todos.filter(matchesFilter));
   const cols = [
     ['overdue', 'Overdue', b.overdue], ['today', 'Today', b.today], ['upcoming', 'Upcoming', b.upcoming], ['someday', 'No date', b.someday],
   ].filter(([k, , items]) => items.length || k === 'today');
   $('#todo-columns').innerHTML = cols.map(([k, label, items]) => `
     <div class="todo-col ${k}"><h3>${label} <span class="n">${items.length}</span></h3>
     <ul class="todo-list">${items.length ? items.map(todoLi).join('') : '<li class="empty">Nothing here</li>'}</ul></div>`).join('');
-  const done = state.todos.filter((x) => x.done).sort((a, b2) => (a.doneAt < b2.doneAt ? 1 : -1)).slice(0, 100);
-  $('#done-count').textContent = `(${state.todos.filter((x) => x.done).length})`;
+  const allDone = state.todos.filter((x) => x.done && matchesFilter(x));
+  const done = allDone.sort((a, b2) => (a.doneAt < b2.doneAt ? 1 : -1)).slice(0, 100);
+  $('#done-count').textContent = `(${allDone.length})`;
   $('#todo-done').innerHTML = done.map(todoLi).join('');
-  const deleted = state.deletedTodos || [];
+  const deleted = (state.deletedTodos || []).filter(matchesFilter);
   $('#deleted-count').textContent = `(${deleted.length})`;
   $('#todo-deleted').innerHTML = deleted.length ? deleted.map(deletedTodoLi).join('') : '<li class="empty">Nothing deleted.</li>';
 }
@@ -736,6 +823,7 @@ $('#todo-form').onsubmit = async (ev) => {
     priority: $('#todo-priority').value !== 'normal' ? $('#todo-priority').value : quick.priority,
   });
   ev.target.reset();
+  renderTodoFilter(); // keep the project of the current view selected
 };
 
 // ------------------------------------------------------------------ settings

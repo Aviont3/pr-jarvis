@@ -479,3 +479,18 @@ a.btn.primary { color: #fff; }
 .due-pop-chips button.on small { color: #eafff1; }
 .due-pop-pick { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; font-size: 12px; font-weight: 700; color: var(--text-muted); }
 .due-pop-foot { display: flex; justify-content: space-between; margin-top: 10px; }
+
+/* ---------------------------------------------------------------- to-do projects */
+.proj-btn { border: 1px dashed transparent; background: none; padding: 0 4px; border-radius: 8px; cursor: pointer; font: inherit; color: inherit; }
+.proj-btn:hover { border-color: var(--pink); background: #fff; color: var(--text-primary); }
+.proj-btn.empty { color: var(--text-muted); opacity: .75; }
+.todo-list li:hover .proj-btn.empty { opacity: 1; }
+.proj-pop-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 180px; overflow: auto; }
+.proj-pop-list button { border: 1.5px solid var(--border); background: #fff; border-radius: 999px; padding: 5px 12px; cursor: pointer; font-weight: 700; font-size: 13px; }
+.proj-pop-list button:hover { border-color: var(--pink); }
+.proj-pop-list button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.proj-pop-new { display: flex; gap: 6px; margin-top: 10px; }
+.proj-pop-new input { flex: 1; min-width: 0; border-radius: 999px; font-size: 13px; padding: 6px 12px; }
+.todo-filter { margin: 0 0 14px; }
+.todo-filter button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.todo-filter button .n { opacity: .7; font-weight: 400; margin-left: 2px; }

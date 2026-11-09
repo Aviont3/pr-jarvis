@@ -392,6 +392,18 @@ export function parseCommand(input, ctx = {}) {
     if (due) return out('todo_due', { query: tidy(moveM[1]), due: due.due });
   }
 
+  // Changing a to-do's project:
+  //   "put follow up with Axios under Acme", "assign the venue to Nike",
+  //   "change the project of the recap to Spring Launch", "move the venue to the Nike project"
+  const projM =
+    text.match(/^(?:change|set|update)\s+(?:the\s+)?project\s+(?:of|for|on)\s+(?:the\s+)?(?:to-?do\s+)?(.+?)\s+to\s+(.+)$/i) ||
+    text.match(/^(?:put|file|move)\s+(?:the\s+)?(?:to-?do\s+)?(.+?)\s+(?:under|in|into|to)\s+(?:the\s+)?(.+?)(?:\s+project)?$/i) ||
+    text.match(/^(?:assign|tag|link)\s+(?:the\s+)?(?:to-?do\s+)?(.+?)\s+(?:to|with|as)\s+(?:the\s+)?(.+?)(?:\s+project)?$/i);
+  if (projM) {
+    const pm = matchProject(projM[2], projects);
+    if (pm) return out('todo_project', { query: tidy(projM[1]), project: pm.project });
+  }
+
   const todoM =
     text.match(/^(?:add|create|new|put|make)?\s*(?:a\s+)?(?:to-?\s?do|todo|task|reminder)(?:\s+to my list)?\s*(?:[:,\-]|\s+to\s+|\s+)\s*(.+)$/i) ||
     text.match(/^remind me (?:to\s+)?(.+)$/i) ||
@@ -410,7 +422,8 @@ export function parseCommand(input, ctx = {}) {
   }
 
   if (/(what'?s|what is|read( me)?|show( me)?|list|open|check)\s+(on\s+)?(my|the)\s+(to-?\s?do|todo|task)?\s*(list|items|tasks|to-?\s?dos)|\bmy (to-?\s?dos|todos|tasks)\b|what do i (have|need|still need) to do|what'?s (due|overdue|left)|\bto-?\s?do list\b|anything (due|overdue)/.test(t)) {
-    return out('todo_list');
+    const pm = matchProject(text, projects);
+    return out('todo_list', { project: pm?.project || '' });
   }
 
   // Questions
