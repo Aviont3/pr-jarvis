@@ -103,7 +103,7 @@
 
     <!-- ============================== MY WORK -->
     <section class="view" id="view-log">
-      <div class="page-title"><h1>📒 My Work</h1><p>Everything you've logged. Click any row to change it.</p></div>
+      <div class="page-title"><h1>📒 My Work</h1><p>Everything you've logged. Use ✏️ to change or 🗑️ to delete anything, on any day. Deleted by mistake? Click <b>Undo</b>.</p></div>
       <div class="panel">
         <div class="toolbar">
           <div class="filters">
@@ -136,9 +136,9 @@
         <div class="log-heading" id="log-heading" hidden></div>
         <div class="table-wrap">
           <table class="log-table">
-            <thead><tr><th>Date</th><th>Project</th><th>What I did</th><th>Type</th><th class="num">Hours</th><th>Next step</th></tr></thead>
+            <thead><tr><th>Date</th><th>Project</th><th>What I did</th><th>Type</th><th class="num">Hours</th><th>Next step</th><th class="actions-col"><span class="sr-only">Change or delete</span></th></tr></thead>
             <tbody id="log-body"></tbody>
-            <tfoot><tr><td colspan="4">Total</td><td class="num" id="log-total"></td><td></td></tr></tfoot>
+            <tfoot><tr><td colspan="4">Total</td><td class="num" id="log-total"></td><td colspan="2"></td></tr></tfoot>
           </table>
         </div>
       </div>

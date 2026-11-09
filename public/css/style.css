@@ -428,3 +428,17 @@ dialog.help { width: min(640px, 94vw); }
 .log-heading p { margin: 0; color: var(--text-secondary); }
 .day-link { padding: 0; font-weight: 600; color: var(--text-primary); text-decoration: underline dotted var(--pink); text-underline-offset: 3px; }
 .day-link:hover { color: var(--pink); }
+
+/* ---------------------------------------------------------------- edit / delete / undo */
+.row-actions { display: inline-flex; gap: 4px; flex: none; }
+.ra { border: 1px solid var(--border); background: #fff; border-radius: 10px; width: 32px; height: 30px; cursor: pointer; font-size: 14px; opacity: .55; transition: opacity .15s, transform .15s, border-color .15s; }
+li:hover .ra, tr:hover .ra, .ra:focus-visible { opacity: 1; }
+.ra:hover { transform: translateY(-1px); border-color: var(--pink); }
+.ra.del:hover { border-color: var(--danger); background: #fff1f3; }
+.entry-list li { align-items: center; }
+.log-table .actions-col { width: 84px; text-align: right; white-space: nowrap; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.toast.has-action { pointer-events: auto; display: flex; align-items: center; gap: 14px; padding-right: 8px; }
+.toast-btn { border: 0; background: var(--accent); color: #fff; font-weight: 800; border-radius: 999px; padding: 6px 14px; cursor: pointer; }
+.toast-btn:hover { background: var(--accent-strong); }
+@media (hover: none) { .ra { opacity: 1; } }

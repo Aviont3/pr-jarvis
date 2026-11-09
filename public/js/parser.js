@@ -315,6 +315,20 @@ export function parseCommand(input, ctx = {}) {
 
   if (/^(help|what can you do|commands|what can i say|how do i use (this|you))\b/.test(t)) return out('help');
 
+  // Fixing the most recent entry: "delete my last entry", "undo that", "change that to 45 minutes"
+  const LAST = '(?:that|it|this|the last (?:one|entry|thing|log)|my last (?:one|entry|thing|log)|last entry|the entry|what i just logged)';
+  if (new RegExp(`^(?:delete|remove|erase|undo|get rid of|scrap)\\s+${LAST}$`).test(t) || /^undo( that| it)?$/.test(t)) {
+    return out('entry_delete');
+  }
+  const edit = text.match(new RegExp(`^(?:edit|change|fix|update|correct|make)\\s+${LAST}(?:\\s+(?:to|into|so it'?s|so it says|as)\\s+(.+))?$`, 'i'));
+  if (edit) {
+    const to = edit[1] || '';
+    const d = to ? parseDuration(to) : null;
+    const pm = to ? matchProject(to, projects) : null;
+    const day = to ? (/\byesterday\b/i.test(to) ? isoDate(addDays(now, -1)) : parseSpecificDate(to, now)?.date) : null;
+    return out('entry_edit', { hours: d?.hours ?? null, project: pm?.project || '', date: day || '' });
+  }
+
   if (/\b(morning brief|good morning|start (my|the) day|brief me|daily brief|what'?s (the plan|up) today)\b/.test(t)) return out('brief');
 
   if (/\b(wrap (it |things )?up|wrap ?up|end of (the )?day|end my day|eod|good ?night|day summary|daily summary|how did i do today|close out (my|the) day)\b/.test(t)) return out('wrapup');

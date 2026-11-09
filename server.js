@@ -297,9 +297,28 @@ async function api(req, res, pathname) {
     if (m === 'POST' && !id) return ok({ item: addEntry(body) });
     if (m === 'PATCH' && id) { const e = updateEntry(id, body); return e ? ok({ item: e }) : send(res, 404, { error: 'Not found' }); }
     if (m === 'DELETE' && id) {
+      const entry = db.entries.find((x) => x.id === id);
+      if (!entry) return send(res, 404, { error: 'That entry was already deleted.' });
       db.entries = db.entries.filter((x) => x.id !== id);
       enqueue({ op: 'upsertEntry', id }); // materializes to a delete
-      return ok();
+      // The open to-do made from this entry's "next step" goes too (finished ones stay).
+      const todos = db.todos.filter((t) => t.sourceEntryId === id && !t.done);
+      db.todos = db.todos.filter((t) => !todos.includes(t));
+      for (const t of todos) enqueue({ op: 'upsertTodo', id: t.id });
+      return ok({ removed: { entry, todos } }); // the client keeps this for Undo
+    }
+    // Undo a delete: put back exactly what was removed (same ids, no new to-dos).
+    if (m === 'POST' && id === 'restore') {
+      const { entry, todos = [] } = body.removed || {};
+      if (!entry?.id) return send(res, 400, { error: 'Nothing to restore.' });
+      if (!db.entries.some((x) => x.id === entry.id)) {
+        db.entries.push({ ...entry, ...cleanEntry(entry) });
+        enqueue({ op: 'upsertEntry', id: entry.id });
+      }
+      for (const t of todos) {
+        if (t?.id && !db.todos.some((x) => x.id === t.id)) { db.todos.push(t); enqueue({ op: 'upsertTodo', id: t.id }); }
+      }
+      return ok({ item: entry });
     }
   }
 

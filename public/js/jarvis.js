@@ -16,6 +16,7 @@ export const HELP = {
       '"Log 45 minutes on Spring Launch: pitched TechCrunch and Axios"',
       '"Spent 2 hours drafting the Acme press release. Next step: send to client"',
     ] },
+    { heading: 'Fix mistakes', items: ['"Change that to 45 minutes"', '"Change that to Nike Holiday"', '"Edit my last entry"', '"Delete my last entry" / "Undo that"'] },
     { heading: 'Timer', items: ['"Start working on Acme press release"', '"Stop" / "Done"', '"What am I working on?"', '"Cancel timer"'] },
     { heading: 'To-dos', items: ['"Add to-do: follow up with Axios Friday"', '"Remind me to send the recap tomorrow, urgent"', '"What\'s on my list?"', '"Check off follow up with Axios"'] },
     { heading: 'Questions & reports', items: ['"How many hours on Acme this month?"', '"What did I do yesterday?"', '"What did I do on October 19th?"', '"Weekly report" / "Report for Nike last week"'] },
@@ -25,6 +26,18 @@ export const HELP = {
 };
 
 const say = (speech, extra = {}) => ({ speech, title: '', sections: [], ...extra });
+
+/** The most recently logged entry (by when it was saved, not the day it's for). */
+const lastEntry = (entries) => [...entries].sort((a, b) => ((a.createdAt || '') < (b.createdAt || '') ? 1 : -1))[0];
+
+/** Fields an "edit" command asked to change: hours, project, date. */
+function editChanges(cmd) {
+  const c = {};
+  if (cmd.hours) c.hours = cmd.hours;
+  if (cmd.project) c.project = cmd.project;
+  if (cmd.date) c.date = cmd.date;
+  return c;
+}
 
 const CAL_OFF = 'Google Calendar isn\'t connected yet. Turn it on in Settings under "Google Calendar".';
 
@@ -111,6 +124,17 @@ export class Jarvis {
       const p = this.pending;
       if (cmd.intent === 'no') { this.pending = null; return say('Okay, never mind.'); }
       if (p.type === 'confirmLog' && cmd.intent === 'yes') return this.saveEntry(p.entry);
+      if (p.type === 'confirmDelete' && cmd.intent === 'yes') return this.deleteEntry(p.entry);
+      // "change that…" / "delete that" while an entry is still waiting to be saved: fix the draft instead.
+      if ((p.type === 'confirmLog' || p.type === 'needHours') && cmd.intent === 'entry_edit') {
+        const changes = editChanges(cmd);
+        if (!Object.keys(changes).length) return say('Make your changes in the box below, then click Save.', { card: { kind: 'entry', entry: p.entry } });
+        return this.proposeEntry({ ...p.entry, ...changes });
+      }
+      if ((p.type === 'confirmLog' || p.type === 'needHours' || p.type === 'needWork') && cmd.intent === 'entry_delete') {
+        this.pending = null;
+        return say("Okay, I won't save that one.");
+      }
       const dur = parseDuration(cmd.text);
       const bareDuration = dur && cmd.intent === 'log' && !cmd.workDone;
       if ((p.type === 'needHours' || p.type === 'confirmLog') && bareDuration) {
@@ -141,6 +165,24 @@ export class Jarvis {
 
     switch (cmd.intent) {
       case 'empty': return say("I'm listening.");
+
+      case 'entry_delete': {
+        const last = lastEntry(state.entries);
+        if (!last) return say("There's nothing logged to delete yet.");
+        this.pending = { type: 'confirmDelete', entry: last };
+        return say(`Delete “${last.workDone || last.task}” (${fmtHours(last.hours)}, ${fmtDate(last.date)})? Say yes to delete it.`);
+      }
+
+      case 'entry_edit': {
+        const last = lastEntry(state.entries);
+        if (!last) return say("There's nothing logged to change yet.");
+        const changes = editChanges(cmd);
+        if (!Object.keys(changes).length) {
+          return say(`Here's “${last.workDone || last.task}”. Make your changes and click Save.`, { openEntry: last });
+        }
+        const updated = await this.actions.updateEntry(last.id, changes);
+        return say(`Updated. It's now ${this.describeEntry({ ...last, ...changes, ...(updated || {}) })}.`, { saved: true });
+      }
       case 'help': return { ...HELP };
       case 'yes': return say("There's nothing waiting for a yes right now.");
       case 'no': return say('Okay.');
@@ -257,6 +299,12 @@ export class Jarvis {
         return say(`Sorry, I didn't catch that. Say "help" to see what I can do.`);
       }
     }
+  }
+
+  async deleteEntry(entry) {
+    this.pending = null;
+    const removed = await this.actions.deleteEntry(entry.id);
+    return say(`Deleted “${entry.workDone || entry.task}”.`, { undo: removed });
   }
 
   /** Offer to log a meeting that just ended. "yes" saves it. */

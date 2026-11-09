@@ -31,7 +31,8 @@ async function api(method, path, body) {
 const actions = {
   addEntry: async (e) => (await api('POST', 'entries', e)).item,
   updateEntry: async (id, e) => (await api('PATCH', `entries/${id}`, e)).item,
-  deleteEntry: async (id) => api('DELETE', `entries/${id}`),
+  deleteEntry: async (id) => (await api('DELETE', `entries/${id}`)).removed,
+  restoreEntry: async (removed) => (await api('POST', 'entries/restore', { removed })).item,
   addTodo: async (t) => (await api('POST', 'todos', t)).item,
   updateTodo: async (id, t) => (await api('PATCH', `todos/${id}`, t)).item,
   deleteTodo: async (id) => api('DELETE', `todos/${id}`),
@@ -96,13 +97,33 @@ function celebrate(from) {
 const CHEERS = ['Blooming nicely! 🌷', 'Look at you grow! 🌱', 'Fresh progress! 🌼', 'Another petal on the board! 🌸', 'Sunny work! ☀️'];
 const cheer = () => CHEERS[Math.floor(Math.random() * CHEERS.length)];
 
-function toast(msg) {
+/** Short message at the bottom. With { action, onAction } it gets a button (e.g. Undo) and stays longer. */
+function toast(msg, opts = {}) {
   const t = $('#toast');
   t.textContent = msg;
+  t.classList.toggle('has-action', !!opts.action);
+  if (opts.action) {
+    const b = Object.assign(document.createElement('button'), { className: 'toast-btn', textContent: opts.action });
+    b.onclick = () => { t.classList.remove('show'); opts.onAction(); };
+    t.append(b);
+  }
   t.classList.add('show');
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => t.classList.remove('show'), 2600);
+  toast.timer = setTimeout(() => t.classList.remove('show'), opts.action ? 8000 : 2600);
 }
+
+/** Delete an entry right away, with an Undo button instead of an "are you sure?" box. */
+async function removeEntry(id) {
+  const entry = state.entries.find((e) => e.id === id);
+  if (!entry) return;
+  const removed = await actions.deleteEntry(id);
+  const extra = removed?.todos?.length ? ' (and its to-do)' : '';
+  toast(`🗑️ Deleted “${shorten(entry.workDone || entry.task, 40)}”${extra}`, {
+    action: '↩️ Undo',
+    onAction: async () => { await actions.restoreEntry(removed); toast('Brought it back 🌷'); },
+  });
+}
+const shorten = (s, n) => (String(s || '').length > n ? `${String(s).slice(0, n - 1)}…` : String(s || ''));
 
 // ------------------------------------------------------------------ voice & chat
 
@@ -195,6 +216,13 @@ function jarvisSay(res, speak = true) {
   el.innerHTML = html;
   if (res.card?.kind === 'entry') el.append(entryCard(res.card.entry));
   if (res.card?.kind === 'report') el.append(reportCard(res.card.text));
+  if (res.undo) {
+    const b = Object.assign(document.createElement('button'), { className: 'btn ghost small', textContent: '↩️ Undo' });
+    b.style.marginTop = '8px';
+    b.onclick = async () => { b.disabled = true; await actions.restoreEntry(res.undo); b.textContent = '✓ Brought back'; toast('Brought it back 🌷'); };
+    el.append(b);
+  }
+  if (res.openEntry) setTimeout(() => openEntry(res.openEntry), 300);
   if (res.card?.kind === 'day') {
     const b = Object.assign(document.createElement('button'), { className: 'btn ghost small', textContent: '📒 Open this day in My Work' });
     b.style.marginTop = '8px';
@@ -286,8 +314,13 @@ function renderTimer() {
   }
 }
 
+/** ✏️ / 🗑️ buttons shown on every entry. */
+function rowActions(e) {
+  return `<span class="row-actions"><button type="button" class="ra" data-edit="${e.id}" title="Change this" aria-label="Change this entry">✏️</button><button type="button" class="ra del" data-del="${e.id}" title="Delete this" aria-label="Delete this entry">🗑️</button></span>`;
+}
+
 function entryLi(e) {
-  return `<li data-entry="${e.id}"><span class="hrs">${fmtNum(e.hours)}</span><div class="body"><div>${h(e.workDone || e.task)}</div><div class="meta">${h(displayProject(e.project))}${e.category ? ` · ${h(e.category)}` : ''}${e.notes ? ` · Next: ${h(e.notes)}` : ''}</div></div></li>`;
+  return `<li data-entry="${e.id}"><span class="hrs">${fmtNum(e.hours)}</span><div class="body"><div>${h(e.workDone || e.task)}</div><div class="meta">${h(displayProject(e.project))}${e.category ? ` · ${h(e.category)}` : ''}${e.notes ? ` · Next: ${h(e.notes)}` : ''}</div></div>${rowActions(e)}</li>`;
 }
 
 function dueMeta(td) {
@@ -346,8 +379,8 @@ function renderLog() {
     <tr data-entry="${e.id}" title="Click to change">
       <td class="nowrap"><button type="button" class="link day-link" data-day="${e.date}" title="See everything from this day">${fmtDate(e.date)}</button></td><td>${h(displayProject(e.project))}</td>
       <td class="wd">${h(e.workDone || e.task)}</td><td>${e.category ? `<span class="tag">${h(e.category)}</span>` : ''}</td>
-      <td class="num">${fmtNum(e.hours)}</td><td>${h(e.notes)}</td>
-    </tr>`).join('') : `<tr><td colspan="6" class="empty">${isDay
+      <td class="num">${fmtNum(e.hours)}</td><td>${h(e.notes)}</td><td class="actions-col">${rowActions(e)}</td>
+    </tr>`).join('') : `<tr><td colspan="7" class="empty">${isDay
       ? `Nothing was logged on ${fmtDate(range.from, true)}. Use ◀ ▶ to look at other days, or click “+ Log work” to add something for this day.`
       : 'Nothing here yet. Try “Everything” in the Show menu, or click “+ Log work”.'}</td></tr>`;
   $('#log-total').textContent = fmtNum(sum(es, (e) => e.hours));
@@ -528,10 +561,17 @@ $('#entry-form').onsubmit = async (ev) => {
   else { celebrate(); toast(cheer()); }
 };
 $('#entry-delete').onclick = async () => {
-  if (editingId && confirm('Delete this entry?')) { await actions.deleteEntry(editingId); dlg.close(); toast('Deleted'); }
+  if (!editingId) return;
+  const id = editingId;
+  dlg.close();
+  await removeEntry(id);
 };
 
 document.addEventListener('click', (ev) => {
+  const del = ev.target.closest('[data-del]');
+  if (del) { removeEntry(del.dataset.del); return; }
+  const edit = ev.target.closest('[data-edit]');
+  if (edit) { openEntry(state.entries.find((e) => e.id === edit.dataset.edit)); return; }
   const dayBtn = ev.target.closest('[data-day]');
   if (dayBtn) { openDay(dayBtn.dataset.day); return; }
   const row = ev.target.closest('[data-entry]');
