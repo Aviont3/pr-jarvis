@@ -288,3 +288,18 @@ dialog::backdrop { background: rgba(255, 228, 238, .55); backdrop-filter: blur(3
   .petals, .burst { display: none; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ---------------------------------------------------------------- meetings */
+.meetings-panel { background: linear-gradient(135deg, rgba(236, 229, 251, .9), rgba(255, 255, 255, .9)); }
+.meeting-list { list-style: none; margin: 0; padding: 0; }
+.meeting-list li { display: flex; align-items: center; gap: 12px; padding: 9px 8px; border-radius: 14px; }
+.meeting-list li:hover { background: rgba(255, 255, 255, .7); }
+.meeting-list .when { font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 800; color: var(--lilac); min-width: 64px; }
+.meeting-list .t { flex: 1; min-width: 0; }
+.meeting-list .t b { display: block; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meeting-list .meta { color: var(--text-muted); font-size: 12px; }
+.meeting-list li.past .when { color: var(--text-muted); }
+.meeting-list li.now { background: rgba(255, 255, 255, .85); box-shadow: inset 3px 0 0 var(--lilac); }
+.meeting-list li.now .meta::before { content: "● Happening now · "; color: var(--pink); font-weight: 700; }
+.meeting-list .logged { color: var(--accent-strong); font-size: 12px; font-weight: 800; white-space: nowrap; }
+.cal-error { color: var(--danger); font-size: 13px; padding: 6px 4px; }

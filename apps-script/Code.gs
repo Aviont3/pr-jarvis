@@ -7,6 +7,11 @@
  *
  * The token below must match the one in Jarvis. If you copied this script
  * from Jarvis Settings, it's already filled in.
+ *
+ * Google Calendar: Jarvis can also read your meetings through this script.
+ * After updating the script, use Deploy → Manage deployments → ✏️ Edit →
+ * Version: New version → Deploy, and approve the calendar permission.
+ * The web app URL stays the same. Jarvis only reads events; it never changes your calendar.
  */
 const TOKEN = 'PASTE_TOKEN_HERE';
 
@@ -30,10 +35,12 @@ function doPost(e) {
     lock.waitLock(30000);
     try {
       const ss = SpreadsheetApp.getActiveSpreadsheet();
-      const ctx = { ss: ss, index: {} };
+      const ctx = { ss: ss, index: {}, out: {} };
       (body.ops || []).forEach(function (op) { apply_(ctx, op); });
       SpreadsheetApp.flush();
-      return json_({ ok: true, spreadsheet: ss.getName() });
+      const result = { ok: true, spreadsheet: ss.getName() };
+      Object.keys(ctx.out).forEach(function (k) { result[k] = ctx.out[k]; });
+      return json_(result);
     } finally {
       lock.releaseLock();
     }
@@ -45,6 +52,7 @@ function doPost(e) {
 function apply_(ctx, op) {
   switch (op.op) {
     case 'ping': return;
+    case 'getEvents': ctx.out.events = getEvents_(op.from, op.to, op.allCalendars); return;
     case 'upsertEntry': return upsert_(ctx, logSheet_(ctx.ss), op.entry.id, entryRow_(op.entry), 'log');
     case 'deleteEntry': return remove_(ctx, logSheet_(ctx.ss), op.id, 'log');
     case 'upsertTodo': return upsert_(ctx, todoSheet_(ctx.ss), op.todo.id, todoRow_(op.todo), 'todo');
@@ -151,6 +159,41 @@ function remove_(ctx, sh, id, key) {
   sh.deleteRow(r);
   delete idx[id];
   Object.keys(idx).forEach(function (k) { if (idx[k] > r) idx[k] -= 1; });
+}
+
+// ---------------------------------------------------------------- Google Calendar (read-only)
+
+function getEvents_(fromIso, toIso, allCalendars) {
+  const from = toDate_(fromIso);
+  const to = toDate_(toIso);
+  to.setDate(to.getDate() + 1); // inclusive end date
+  const cals = allCalendars
+    ? CalendarApp.getAllCalendars().filter(function (c) { return !c.isHidden(); })
+    : [CalendarApp.getDefaultCalendar()];
+  const tz = Session.getScriptTimeZone();
+  const out = [];
+  cals.forEach(function (cal) {
+    cal.getEvents(from, to).forEach(function (ev) {
+      if (ev.isAllDayEvent()) return;
+      let status = '';
+      try { status = String(ev.getMyStatus()); } catch (e) { /* not a guest */ }
+      if (status === 'NO') return; // declined
+      const start = ev.getStartTime();
+      const end = ev.getEndTime();
+      out.push({
+        id: ev.getId() + '_' + start.getTime(),
+        title: ev.getTitle() || '(No title)',
+        start: start.toISOString(),
+        end: end.toISOString(),
+        date: Utilities.formatDate(start, tz, 'yyyy-MM-dd'),
+        location: ev.getLocation() || '',
+        guests: ev.getGuestList().length,
+        calendar: cal.getName(),
+      });
+    });
+  });
+  out.sort(function (a, b) { return a.start < b.start ? -1 : 1; });
+  return out;
 }
 
 function json_(obj) {

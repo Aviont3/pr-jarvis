@@ -37,6 +37,10 @@ const DEFAULT_SETTINGS = () => ({
   workEnd: '18:00',
   sheetUrl: '',
   sheetToken: crypto.randomBytes(12).toString('hex'),
+  calendarEnabled: false,
+  calendarAll: false,
+  meetingPrompts: true,
+  meetingCategory: 'Internal Meetings',
 });
 
 function emptyDb() {
@@ -92,7 +96,7 @@ const publicState = () => ({
 
 // ------------------------------------------------------------------ domain
 
-const ENTRY_FIELDS = ['date', 'project', 'task', 'workDone', 'category', 'hours', 'notes'];
+const ENTRY_FIELDS = ['date', 'project', 'task', 'workDone', 'category', 'hours', 'notes', 'calendarEventId'];
 const TODO_FIELDS = ['text', 'project', 'due', 'priority', 'done', 'doneAt', 'notes'];
 const pick = (o, keys) => Object.fromEntries(keys.filter((k) => o[k] !== undefined).map((k) => [k, o[k]]));
 
@@ -368,9 +372,42 @@ async function api(req, res, pathname) {
   return send(res, 404, { error: 'Unknown API route' });
 }
 
+// ------------------------------------------------------------------ Google Calendar (read-only, via the same Apps Script)
+
+const calCache = new Map(); // key -> { at, events }
+const CAL_TTL = 5 * 60 * 1000;
+
+async function calendarApi(req, res) {
+  const url = new URL(req.url, 'http://localhost');
+  const from = url.searchParams.get('from') || isoDate();
+  const to = url.searchParams.get('to') || from;
+  const fresh = url.searchParams.get('refresh') === '1';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return send(res, 400, { error: 'Bad date' });
+  if (!db.settings.calendarEnabled) return send(res, 200, { enabled: false, events: [] });
+  if (!db.settings.sheetUrl) return send(res, 200, { enabled: true, events: [], error: 'Connect the Google script in Settings first.' });
+
+  const key = `${from}|${to}|${db.settings.calendarAll ? 'all' : 'default'}`;
+  const hit = calCache.get(key);
+  if (hit && !fresh && Date.now() - hit.at < CAL_TTL) return send(res, 200, { enabled: true, events: hit.events, cachedAt: hit.at });
+  try {
+    const r = await callSheet({ ops: [{ op: 'getEvents', from, to, allCalendars: !!db.settings.calendarAll }] });
+    if (!Array.isArray(r.events)) {
+      throw new Error('Your Google script is an older version. Copy the script again from Settings, paste it in, and deploy a new version.');
+    }
+    calCache.set(key, { at: Date.now(), events: r.events });
+    return send(res, 200, { enabled: true, events: r.events, cachedAt: Date.now() });
+  } catch (err) {
+    const msg = String(err.message || err);
+    const hint = /permission|authoriz|calendar/i.test(msg)
+      ? `${msg} (In Apps Script, deploy a new version and approve calendar access.)` : msg;
+    return send(res, 200, { enabled: true, events: hit?.events || [], error: hint });
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const { pathname } = new URL(req.url, `http://${req.headers.host}`);
   try {
+    if (pathname.startsWith('/api/calendar')) return await calendarApi(req, res);
     if (pathname.startsWith('/api/')) return await api(req, res, pathname);
     return serveStatic(req, res, decodeURIComponent(pathname));
   } catch (err) {

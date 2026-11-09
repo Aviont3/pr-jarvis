@@ -216,7 +216,7 @@ export function tidy(s) {
     .replace(/\s+/g, ' ')
     .replace(/\s+([,.;:!?])/g, '$1')
     .replace(/^[\s,.;:\-–—]+|[\s,;:\-–—]+$/g, '')
-    .replace(/\b(for|on|about|to|by|and|with|at|in)\s*$/i, '')
+    .replace(/(?<![\w-])(for|on|about|to|by|and|with|at|in)\s*$/i, '')
     .replace(/^(for|on|about|and|that|i|the)\s+/i, '')
     .trim();
   out = out.replace(/[\s,;:\-–—]+$/g, '');
@@ -272,6 +272,18 @@ export function parseCommand(input, ctx = {}) {
   if (/\b(morning brief|good morning|start (my|the) day|brief me|daily brief|what'?s (the plan|up) today)\b/.test(t)) return out('brief');
 
   if (/\b(wrap (it |things )?up|wrap ?up|end of (the )?day|end my day|eod|good ?night|day summary|daily summary|how did i do today|close out (my|the) day)\b/.test(t)) return out('wrapup');
+
+  // Calendar
+  if (/^(?:log|record|track|add)\s+(?:all\s+)?(?:of\s+)?(?:my|the|today'?s)?\s*(?:meetings|calls|calendar)\b/.test(t)) {
+    return out('calendar_log', { query: '' });
+  }
+  const meetLog = text.match(/^(?:log|record|track)\s+(?:the\s+|my\s+)?(.+?)\s+(?:meeting|call|sync|check-?in)$/i);
+  if (meetLog && !parseDuration(text)) return out('calendar_log', { query: tidy(meetLog[1]) });
+  if (/\b(what'?s|what is) on my (calendar|schedule|agenda)|\bmy (calendar|schedule|agenda)\b|\b(what|any) (meetings|calls)\b|\bmeetings? (do i have|today|tomorrow|this week)\b|\bdo i have (any )?(meetings|calls)\b|\bnext (meeting|call)\b|\bwhen'?s my next\b/.test(t)) {
+    const next = /\bnext (meeting|call)\b|\bwhen'?s my next\b/.test(t);
+    const period = /\btomorrow\b/.test(t) ? 'tomorrow' : /\bthis week\b|\bthe week\b/.test(t) ? 'this week' : 'today';
+    return out('calendar_list', { period, next });
+  }
 
   // Timer
   if (/^(cancel|discard|scrap|delete|reset) (the |my )?timer\b/.test(t)) return out('timer_cancel');

@@ -4,6 +4,7 @@
 import { parseCommand, parseDuration, matchProject, guessCategory, shortTask, tidy } from './parser.js';
 import {
   morningBrief, wrapUp, answerHours, answerLog, answerTodos, buildReport, findTodo, displayProject,
+  answerMeetings, unloggedMeetings, meetingToEntry, meetingsOn, isMeetingLogged, fmtTime,
 } from './insights.js';
 import { isoDate, fmtHours, roundHours, fmtDate } from './util.js';
 
@@ -18,11 +19,25 @@ export const HELP = {
     { heading: 'Timer', items: ['"Start working on Acme press release"', '"Stop" / "Done"', '"What am I working on?"', '"Cancel timer"'] },
     { heading: 'To-dos', items: ['"Add to-do: follow up with Axios Friday"', '"Remind me to send the recap tomorrow, urgent"', '"What\'s on my list?"', '"Check off follow up with Axios"'] },
     { heading: 'Questions & reports', items: ['"How many hours on Acme this month?"', '"What did I do yesterday?"', '"Weekly report" / "Report for Nike last week"'] },
+    { heading: 'Calendar', items: ['"What meetings do I have today?"', '"When\'s my next meeting?"', '"Log my meetings"', '"Log the Acme check-in meeting"'] },
     { heading: 'Daily rhythm', items: ['"Morning brief"', '"Wrap up my day"'] },
   ],
 };
 
 const say = (speech, extra = {}) => ({ speech, title: '', sections: [], ...extra });
+
+const CAL_OFF = 'Google Calendar isn\'t connected yet. Turn it on in Settings under "Google Calendar".';
+
+function findMeeting(events, query) {
+  const q = query.toLowerCase().split(/\W+/).filter((w) => w.length > 2);
+  let best = null;
+  for (const ev of events) {
+    const t = ev.title.toLowerCase();
+    const hits = q.filter((w) => t.includes(w)).length;
+    if (hits && (!best || hits > best.hits)) best = { ev, hits };
+  }
+  return best?.ev || null;
+}
 
 export class Jarvis {
   /**
@@ -130,6 +145,33 @@ export class Jarvis {
       case 'no': return say('Okay.');
 
       case 'brief': return morningBrief(state, now);
+
+      case 'calendar_list':
+        if (!state.settings.calendarEnabled) return say(CAL_OFF);
+        return answerMeetings(state, cmd, now);
+
+      case 'calendar_log': {
+        if (!state.settings.calendarEnabled) return say(CAL_OFF);
+        const today = meetingsOn(state.events, isoDate(now)).filter((ev) => !isMeetingLogged(ev, state.entries));
+        if (cmd.query) {
+          const ev = findMeeting(today, cmd.query);
+          if (!ev) return say(`I couldn't find an unlogged meeting today matching "${cmd.query}".`);
+          return this.proposeEntry(meetingToEntry(ev, state.settings));
+        }
+        const done = unloggedMeetings(state, now);
+        if (!done.length) {
+          return say(today.length ? 'All your finished meetings are already logged. 🌼' : 'There are no finished meetings to log today.');
+        }
+        let total = 0;
+        for (const ev of done) {
+          const e = meetingToEntry(ev, state.settings);
+          total += e.hours;
+          await this.actions.addEntry(e);
+        }
+        return say(`Logged ${done.length} ${done.length === 1 ? 'meeting' : 'meetings'}, ${fmtHours(total)} in total.`, {
+          saved: true, sections: [{ heading: 'Logged', items: done.map((ev) => `${fmtTime(ev.start)} · ${ev.title}`) }],
+        });
+      }
       case 'wrapup': return wrapUp(state, now);
       case 'todo_list': return answerTodos(state, now);
       case 'query_hours': return answerHours(state, cmd, now);
@@ -211,6 +253,15 @@ export class Jarvis {
         return say(`Sorry, I didn't catch that. Say "help" to see what I can do.`);
       }
     }
+  }
+
+  /** Offer to log a meeting that just ended. "yes" saves it. */
+  promptMeeting(ev) {
+    const entry = meetingToEntry(ev, this.getState().settings);
+    this.pending = { type: 'confirmLog', entry };
+    return say(`Your meeting "${ev.title}" just ended. Log ${fmtHours(entry.hours)}${entry.project ? ` on ${displayProject(entry.project)}` : ''}? Say yes, or edit it below.`, {
+      title: '📅 Meeting finished', card: { kind: 'entry', entry },
+    });
   }
 
   async completeTodo(td) {

@@ -41,6 +41,20 @@ From then on, every entry and to-do is copied to the sheet:
 
 The sheet link only works with the secret token built into your copy of the script, so nobody else can write to your sheet with it.
 
+### Google Calendar meetings 📅
+Jarvis reads your meetings through the same script, so set up the sheet sync first.
+
+1. **Settings → Copy script**, then paste it into Apps Script again, replacing the old code. Click 💾 Save.
+2. **Deploy → Manage deployments → ✏️ Edit → Version: New version → Deploy.** Approve the calendar permission. Your web app URL stays the same.
+3. In Jarvis **Settings → Google Calendar**, tick **Show my Google Calendar meetings**, click **Save**, then **Test calendar**.
+
+What you get:
+- **📅 Meetings today** panel on the Today screen, with a one-click **Log** button for each meeting. The duration is filled in, the project is guessed from the meeting title, and the category is guessed too (Client Communication when a client's name is in the title).
+- **When a meeting ends**, Jarvis asks whether to log it. Say "yes".
+- Meetings appear in the **morning brief**, and the **wrap-up** points out meetings you haven't logged.
+- Declined meetings and all-day events are skipped. Each meeting can only be logged once.
+- Jarvis only *reads* your calendar and never changes it. Your main calendar is used unless you tick **Include all my calendars**.
+
 ## 3. Talking to Jarvis
 
 Click the glowing mic, or press **⌘J**, and speak. You can also type in the box.
@@ -59,6 +73,10 @@ Click the glowing mic, or press **⌘J**, and speak. You can also type in the bo
 | "How many hours on Acme this month?" | Answers, with a breakdown |
 | "What did I do yesterday?" / "…last week on Nike?" | Lists your entries |
 | "Weekly report" / "Report for Nike last week" | A copy-ready report for your manager or client |
+| "What meetings do I have today?" / "…tomorrow?" | Reads your calendar |
+| "When's my next meeting?" | Next meeting and how soon it starts |
+| "Log my meetings" | Logs every finished meeting you haven't logged today |
+| "Log the Acme check-in meeting" | Logs that one meeting (asks you to confirm) |
 | "Morning brief" / "Wrap up my day" | Your daily kickoff and end-of-day summary |
 | "Help" | Shows all commands |
 
@@ -66,11 +84,11 @@ Jarvis picks the **category** from keywords (e.g. *pitch* → Media Relations & 
 
 ### Daily rhythm
 - **Morning brief:** shown automatically the first time you open Jarvis each day
-- **Check-ins:** optional; Jarvis asks "What have you been working on?" if nothing has been logged for a while (set in Settings)
+- **Check-ins:** optional; Jarvis asks "What have you been working on?" if nothing has been logged for a while (set in Settings). It stays quiet while you're in a meeting.
 - **End-of-day wrap-up:** offered automatically at the end of your workday
 
 ## 4. Screens
-- **Today:** the Jarvis chat, the timer, today's entries and to-dos
+- **Today:** the Jarvis chat, the timer, today's meetings, entries and to-dos
 - **Log:** every entry, with filters, search, editing and CSV export
 - **To-Do:** overdue / today / upcoming / no date, plus completed items
 - **Dashboard:** hours today, this week and this month; charts by day, category and project; the report builder

@@ -3,6 +3,7 @@ import { Voice } from './voice.js';
 import { parseCommand } from './parser.js';
 import {
   stats, todoBuckets, sortTodos, buildReport, toCsv, displayProject, filterEntries, morningBrief, wrapUp,
+  meetingsOn, isMeetingLogged, meetingToEntry, unloggedMeetings, fmtTime, meetingHours,
 } from './insights.js';
 import {
   isoDate, fmtHours, fmtNum, fmtDate, fmtClock, escapeHtml as h, periodRange, sum, parseIso, addDays,
@@ -38,7 +39,10 @@ const actions = {
   cancelTimer: async () => api('POST', 'timer/cancel'),
 };
 
-const jarvis = new Jarvis(() => state, actions);
+// Calendar events live alongside the stored state (fetched from Google, not saved locally).
+let calendar = { enabled: false, events: [], error: null };
+const full = () => ({ ...state, events: calendar.events });
+const jarvis = new Jarvis(full, actions);
 
 // ------------------------------------------------------------------ spring delight: petals & flower confetti
 
@@ -216,6 +220,7 @@ function renderAll() {
   $('#project-options').innerHTML = (state.settings.projects || []).map((p) => `<option value="${h(p)}">`).join('');
   renderSync();
   renderTimer();
+  renderMeetings();
   renderToday();
   renderTodos();
   if ($('#view-log').classList.contains('active')) renderLog();
@@ -523,7 +528,8 @@ function renderSettings() {
   f.projects.value = (s.projects || []).join('\n');
   f.keywords.value = keywordsToText(s.categories || [], s.keywords || {});
   f.defaultCategory.innerHTML = categoryOptions(s.defaultCategory);
-  for (const k of ['speakReplies', 'autoBrief', 'notesToTodos', 'autoSaveVoiceLogs']) f[k].checked = !!s[k];
+  for (const k of ['speakReplies', 'autoBrief', 'notesToTodos', 'autoSaveVoiceLogs', 'calendarEnabled', 'calendarAll', 'meetingPrompts']) f[k].checked = !!s[k];
+  f.meetingCategory.innerHTML = categoryOptions(s.meetingCategory).replace('<option value="">(none)</option>', '');
   f.checkInMinutes.value = String(s.checkInMinutes || 0);
   f.workStart.value = s.workStart || '09:00';
   f.workEnd.value = s.workEnd || '18:00';
@@ -543,10 +549,13 @@ $('#settings-form').onsubmit = async (ev) => {
     defaultCategory: f.defaultCategory.value,
     speakReplies: f.speakReplies.checked, autoBrief: f.autoBrief.checked, notesToTodos: f.notesToTodos.checked,
     autoSaveVoiceLogs: f.autoSaveVoiceLogs.checked,
+    calendarEnabled: f.calendarEnabled.checked, calendarAll: f.calendarAll.checked,
+    meetingPrompts: f.meetingPrompts.checked, meetingCategory: f.meetingCategory.value,
     voiceName: f.voiceName.value, checkInMinutes: Number(f.checkInMinutes.value),
     workStart: f.workStart.value, workEnd: f.workEnd.value, sheetUrl: f.sheetUrl.value.trim(),
   };
   await api('PATCH', 'settings', body);
+  loadCalendar(true);
   renderSettings();
   $('#settings-msg').textContent = 'Saved ✓';
   setTimeout(() => { $('#settings-msg').textContent = ''; }, 2500);
@@ -619,6 +628,87 @@ document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape') voice.stopSpeaking();
 });
 
+// ------------------------------------------------------------------ Google Calendar meetings
+
+async function loadCalendar(refresh = false) {
+  if (!state.settings.calendarEnabled) { calendar = { enabled: false, events: [], error: null }; renderMeetings(); return calendar; }
+  // Monday of this week through a week from today covers "today", "tomorrow" and "this week".
+  const now = new Date();
+  const monday = addDays(now, -((now.getDay() + 6) % 7));
+  const qs = `from=${isoDate(monday)}&to=${isoDate(addDays(now, 7))}${refresh ? '&refresh=1' : ''}`;
+  try {
+    const r = await (await fetch(`/api/calendar?${qs}`)).json();
+    calendar = { enabled: !!r.enabled, events: r.events || [], error: r.error || null };
+  } catch (err) {
+    calendar = { ...calendar, error: err.message };
+  }
+  renderMeetings();
+  return calendar;
+}
+
+function renderMeetings() {
+  if (typeof calendar === 'undefined') return;
+  const panel = $('#meetings-panel');
+  panel.hidden = !state.settings.calendarEnabled;
+  if (panel.hidden) return;
+  const now = new Date();
+  const todays = meetingsOn(calendar.events, isoDate(now));
+  const list = $('#meeting-list');
+  let html = calendar.error ? `<li class="cal-error">⚠️ ${h(calendar.error)}</li>` : '';
+  html += todays.length ? todays.map((ev) => {
+    const started = new Date(ev.start) <= now;
+    const ended = new Date(ev.end) <= now;
+    const cls = ended ? 'past' : started ? 'now' : '';
+    const logged = isMeetingLogged(ev, state.entries);
+    const action = logged
+      ? '<span class="logged">✓ Logged</span>'
+      : `<button class="btn ${ended ? 'primary' : 'ghost'} small" data-log-meeting="${h(ev.id)}">Log ${fmtNum(meetingHours(ev))}h</button>`;
+    return `<li class="${cls}"><span class="when">${fmtTime(ev.start)}</span>
+      <div class="t"><b>${h(ev.title)}</b><span class="meta">${fmtHours(meetingHours(ev))}${ev.location ? ` · ${h(ev.location)}` : ''}${ev.guests ? ` · ${ev.guests} guests` : ''}</span></div>${action}</li>`;
+  }).join('') : (calendar.error ? '' : '<li class="empty">No meetings today. Lots of time to make things bloom 🌷</li>');
+  list.innerHTML = html;
+  $('#meetings-log-all').hidden = !unloggedMeetings(full(), now).length;
+}
+
+document.addEventListener('click', async (ev) => {
+  const btn = ev.target.closest('[data-log-meeting]');
+  if (!btn) return;
+  const meeting = calendar.events.find((x) => x.id === btn.dataset.logMeeting);
+  if (!meeting) return;
+  celebrate(btn);
+  const e = await actions.addEntry(meetingToEntry(meeting, state.settings));
+  toast(`Logged ${fmtHours(e.hours)}: ${meeting.title} 🌸`);
+});
+$('#meetings-log-all').onclick = () => converse('log my meetings');
+$('#meetings-refresh').onclick = async () => { await loadCalendar(true); toast('Calendar refreshed 📅'); };
+
+$('#cal-test').onclick = async () => {
+  const msg = $('#cal-msg');
+  if (!state.settings.calendarEnabled) { msg.textContent = 'Tick “Show my Google Calendar meetings” and click Save first.'; return; }
+  msg.textContent = 'Checking your calendar…';
+  const c = await loadCalendar(true);
+  if (c.error) msg.textContent = `❌ ${c.error}`;
+  else {
+    const n = meetingsOn(c.events, isoDate()).length;
+    msg.textContent = `✅ Connected. ${n} ${n === 1 ? 'meeting' : 'meetings'} today, ${c.events.length} in the next week.`;
+  }
+};
+
+// Ask once per meeting, shortly after it ends.
+const PROMPTED_KEY = 'jarvis.promptedMeetings';
+function meetingTick() {
+  if (!state.settings.calendarEnabled || !state.settings.meetingPrompts) return;
+  const prompted = new Set(JSON.parse(localStorage.getItem(PROMPTED_KEY) || '[]'));
+  const now = Date.now();
+  const just = unloggedMeetings(full(), new Date()).filter((ev) => !prompted.has(ev.id) && now - new Date(ev.end) < 15 * 60000);
+  if (!just.length || jarvis.pending) return;
+  const ev = just[0];
+  prompted.add(ev.id);
+  localStorage.setItem(PROMPTED_KEY, JSON.stringify([...prompted].slice(-200)));
+  jarvisSay(jarvis.promptMeeting(ev));
+  notify(`Your meeting "${ev.title}" just ended. Want to log it?`);
+}
+
 // ------------------------------------------------------------------ daily rhythm: brief, check-ins, wrap-up nudge
 
 const minutesOf = (hhmm) => { const [a, b] = (hhmm || '0:0').split(':').map(Number); return a * 60 + b; };
@@ -631,6 +721,8 @@ function notify(text) {
 }
 
 async function rhythmTick() {
+  renderMeetings();
+  meetingTick();
   const s = state.settings;
   const now = new Date();
   const mins = now.getHours() * 60 + now.getMinutes();
@@ -639,7 +731,8 @@ async function rhythmTick() {
   const today = isoDate(now);
 
   // Check-in: nothing logged for N minutes during work hours and no timer running
-  if (s.checkInMinutes && inHours && !state.timer) {
+  const inMeeting = calendar.events.some((ev) => new Date(ev.start) <= now && new Date(ev.end) > now);
+  if (s.checkInMinutes && inHours && !state.timer && !inMeeting) {
     const todays = state.entries.filter((e) => e.date === today);
     const lastActivity = Math.max(
       ...todays.map((e) => new Date(e.updatedAt || e.createdAt).getTime()),
@@ -657,7 +750,7 @@ async function rhythmTick() {
   // End-of-day nudge (once per day)
   if (workday && mins >= minutesOf(s.workEnd) && state.meta?.lastWrapNudge !== today) {
     await api('PATCH', 'meta', { lastWrapNudge: today });
-    const r = wrapUp(state, now);
+    const r = wrapUp(full(), now);
     jarvisSay({ ...r, title: "It's end of day. Here's your wrap-up" });
     notify('End of day: your wrap-up is ready.');
   }
@@ -669,15 +762,17 @@ async function boot() {
   startPetals();
   await api('GET', 'state');
   show((location.hash || '#today').slice(1) || 'today');
+  await loadCalendar();
   const today = isoDate();
   if (state.settings.autoBrief && state.meta?.lastBriefDate !== today) {
     await api('PATCH', 'meta', { lastBriefDate: today });
-    jarvisSay(morningBrief(state));
+    jarvisSay(morningBrief(full()));
   } else {
     const name = state.settings.userName;
     jarvisSay({ speech: `Hi${name ? ` ${name}` : ''}, I'm ready. Tell me what you've worked on, start a timer, or say "help".` }, false);
   }
   setInterval(rhythmTick, 60000);
+  setInterval(() => loadCalendar(), 5 * 60000);
   setInterval(() => { if (state.sync?.pending) api('GET', 'state'); }, 15000);
   if (!voice.supported) jarvisSay({ speech: 'Voice input needs Google Chrome. You can still type commands below.' }, false);
 }

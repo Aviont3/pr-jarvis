@@ -60,6 +60,13 @@
         <div class="side">
           <div class="panel timer-panel" id="timer-panel"></div>
 
+          <div class="panel meetings-panel" id="meetings-panel" hidden>
+            <div class="panel-head"><h2>📅 Meetings today</h2>
+              <span><button class="link" id="meetings-log-all" hidden>Log finished</button> <button class="link" id="meetings-refresh" title="Refresh from Google Calendar">↻</button></span>
+            </div>
+            <ul class="meeting-list" id="meeting-list"></ul>
+          </div>
+
           <div class="panel">
             <div class="panel-head"><h2>Today</h2><span class="muted" id="today-hours"></span></div>
             <ul class="entry-list" id="today-entries"></ul>
@@ -203,6 +210,21 @@
             <button type="button" class="btn ghost" id="sync-all">Re-sync everything</button>
             <span class="muted" id="sync-msg"></span>
           </div>
+        </div>
+
+        <div class="panel">
+          <h2>📅 Google Calendar</h2>
+          <p class="muted">Jarvis reads your meetings through the same Google script as the sheet sync, so set that up first. It only reads your calendar and never changes it.</p>
+          <ol class="steps">
+            <li>Click <b>Copy script</b> above and paste it into Apps Script again, replacing the old code. Click 💾 Save.</li>
+            <li><b>Deploy → Manage deployments → ✏️ Edit</b>. Under Version, choose <b>New version</b>, then click <b>Deploy</b>. Approve the <b>calendar</b> permission when Google asks. Your web app URL stays the same.</li>
+            <li>Tick the box below, click Save, then <b>Test calendar</b>.</li>
+          </ol>
+          <label class="check"><input type="checkbox" name="calendarEnabled"> Show my Google Calendar meetings in Jarvis</label>
+          <label class="check"><input type="checkbox" name="calendarAll"> Include all my calendars (not just my main one)</label>
+          <label class="check"><input type="checkbox" name="meetingPrompts"> When a meeting ends, ask me whether to log it</label>
+          <label>Category for meetings when Jarvis can't tell <select name="meetingCategory"></select></label>
+          <div class="row"><button type="button" class="btn ghost" id="cal-test">Test calendar</button><span class="muted" id="cal-msg"></span></div>
         </div>
 
         <div class="panel">

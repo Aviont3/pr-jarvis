@@ -4,8 +4,72 @@
 import {
   isoDate, parseIso, addDays, periodRange, inRange, fmtHours, fmtNum, fmtDate, sum,
 } from './util.js';
+import { matchProject, guessCategory } from './parser.js';
 
 export const displayProject = (p) => (p ? p.replace(/^example:\s*/i, '') : 'No project');
+
+// ------------------------------------------------------------------ calendar meetings
+
+export const fmtTime = (iso) => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+export const meetingHours = (ev) => Math.round(((new Date(ev.end) - new Date(ev.start)) / 3600000) * 100) / 100;
+export const isMeetingLogged = (ev, entries) => entries.some((e) => e.calendarEventId === ev.id);
+export const meetingsOn = (events = [], iso) => events.filter((ev) => ev.date === iso);
+
+/** Meetings that have ended today and aren't logged yet. */
+export function unloggedMeetings(state, now = new Date()) {
+  return meetingsOn(state.events, isoDate(now))
+    .filter((ev) => new Date(ev.end) <= now && !isMeetingLogged(ev, state.entries));
+}
+
+/** Turn a calendar event into a Daily Log entry. */
+export function meetingToEntry(ev, settings = {}) {
+  const cats = settings.categories || [];
+  const pm = matchProject(`${ev.title} ${ev.calendar || ''}`, settings.projects || []);
+  let category = guessCategory(ev.title, settings.keywords, cats.length ? cats : null);
+  // Meeting titles rarely say "meeting"; a known client in the title usually means a client call.
+  if (!category || category === 'Admin') {
+    category = pm && cats.includes('Client Communication') ? 'Client Communication' : (settings.meetingCategory || 'Internal Meetings');
+  }
+  return {
+    date: ev.date,
+    project: pm?.project || '',
+    task: ev.title,
+    workDone: `Meeting: ${ev.title} (${fmtTime(ev.start)}–${fmtTime(ev.end)})`,
+    category,
+    hours: meetingHours(ev),
+    notes: '',
+    calendarEventId: ev.id,
+  };
+}
+
+const meetingLine = (ev, entries) =>
+  `${fmtTime(ev.start)}–${fmtTime(ev.end)} · ${ev.title}${entries && isMeetingLogged(ev, entries) ? ' ✓ logged' : ''}`;
+
+export function answerMeetings(state, { period = 'today', next = false } = {}, now = new Date()) {
+  const events = state.events || [];
+  if (next) {
+    const up = events.filter((ev) => new Date(ev.start) > now).sort((a, b) => (a.start < b.start ? -1 : 1))[0];
+    if (!up) return { title: 'Next meeting', speech: 'You have no more meetings coming up today. 🌼', sections: [] };
+    const mins = Math.round((new Date(up.start) - now) / 60000);
+    const when = mins < 60 ? `in ${mins} minutes` : `at ${fmtTime(up.start)}`;
+    return { title: 'Next meeting', speech: `Your next meeting is ${up.title}, ${when}.`, sections: [{ heading: 'Up next', items: [meetingLine(up)] }] };
+  }
+  let list;
+  let label;
+  if (period === 'tomorrow') { const d = isoDate(addDays(now, 1)); list = meetingsOn(events, d); label = 'tomorrow'; }
+  else if (period === 'this week') { const r = periodRange('this week', now); list = events.filter((ev) => inRange(ev.date, r)); label = 'this week'; }
+  else { list = meetingsOn(events, isoDate(now)); label = 'today'; }
+  if (!list.length) return { title: `Meetings ${label}`, speech: `No meetings on your calendar ${label}. Enjoy the open time! 🌷`, sections: [] };
+  const hrs = sum(list, meetingHours);
+  const multiDay = period === 'this week';
+  const items = list.map((ev) => `${multiDay ? `${fmtDate(ev.date)} · ` : ''}${meetingLine(ev, state.entries)}`);
+  const first = list.filter((ev) => new Date(ev.end) > now)[0];
+  return {
+    title: `Meetings ${label}`,
+    speech: `You have ${list.length} ${list.length === 1 ? 'meeting' : 'meetings'} ${label}, ${fmtHours(hrs)} in total.${first && label === 'today' ? ` Next up: ${first.title} at ${fmtTime(first.start)}.` : ''}`,
+    sections: [{ heading: `${list.length} meetings`, items }],
+  };
+}
 
 export function filterEntries(entries, { range, project, category } = {}) {
   return entries.filter((e) =>
@@ -145,6 +209,13 @@ export function morningBrief(state, now = new Date()) {
   } else {
     speech.push('Your to-do list is clear.');
   }
+  const todaysMeetings = meetingsOn(state.events, todayIso);
+  if (todaysMeetings.length) {
+    const first = todaysMeetings[0];
+    speech.push(`You have ${todaysMeetings.length} ${todaysMeetings.length === 1 ? 'meeting' : 'meetings'} today, starting with ${first.title} at ${fmtTime(first.start)}.`);
+    sections.push({ heading: '📅 Meetings today', items: todaysMeetings.map((ev) => meetingLine(ev)) });
+  }
+
   const later = [...b.upcoming, ...b.someday].slice(0, 5);
   if (later.length) sections.push({ heading: 'Coming up', items: later.map((t) => todoLine(t, now)) });
 
@@ -188,6 +259,11 @@ export function wrapUp(state, now = new Date()) {
     sections.push({ heading: 'Rolling over', items: carry.map((x) => todoLine(x, now)) });
   }
   if (dueTomorrow.length) sections.push({ heading: 'Due tomorrow', items: dueTomorrow.map((x) => todoLine(x, now)) });
+  const missed = unloggedMeetings(state, now);
+  if (missed.length) {
+    speech.push(`${missed.length} of today's meetings ${missed.length === 1 ? "isn't" : "aren't"} logged yet. Say "log my meetings" to add ${missed.length === 1 ? 'it' : 'them'}.`);
+    sections.push({ heading: '📅 Meetings not logged', items: missed.map((ev) => `${meetingLine(ev)} (${fmtHours(meetingHours(ev))})`) });
+  }
   if (state.timer) speech.push(`Heads up: your timer is still running on ${state.timer.task || displayProject(state.timer.project)}. Say "stop" to log it.`);
   return { title: 'End of day wrap-up', speech: speech.join(' '), sections };
 }
