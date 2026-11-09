@@ -1,6 +1,7 @@
 import { Jarvis } from './jarvis.js';
 import { Voice } from './voice.js';
-import { parseCommand } from './parser.js';
+import { parseCommand, guessCategory, shortTask } from './parser.js';
+import { HELP } from './jarvis.js';
 import {
   stats, todoBuckets, sortTodos, buildReport, toCsv, displayProject, filterEntries, morningBrief, wrapUp,
   meetingsOn, isMeetingLogged, meetingToEntry, unloggedMeetings, fmtTime, meetingHours,
@@ -105,9 +106,10 @@ function toast(msg) {
 
 // ------------------------------------------------------------------ voice & chat
 
+let voiceCapture = null; // when set (mic test), heard speech goes here instead of to Jarvis
 const voice = new Voice({
   onInterim: (t) => { $('#interim').textContent = t; },
-  onFinal: (t) => { $('#interim').textContent = ''; converse(t); },
+  onFinal: (t) => { $('#interim').textContent = ''; if (voiceCapture) voiceCapture(t); else converse(t); },
   onState: (s) => {
     const mic = $('#mic-btn');
     mic.classList.toggle('listening', s === 'listening');
@@ -219,6 +221,8 @@ function renderAll() {
   $('#today-label').textContent = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   $('#project-options').innerHTML = (state.settings.projects || []).map((p) => `<option value="${h(p)}">`).join('');
   renderSync();
+  renderGoogleStatus();
+  renderHello();
   renderTimer();
   renderMeetings();
   renderToday();
@@ -232,13 +236,14 @@ function renderSync() {
   const pill = $('#sync-pill');
   const s = state.sync || {};
   pill.className = 'sync-pill';
-  if (!state.settings.sheetUrl) { pill.textContent = 'Sheet sync off'; return; }
-  if (s.lastError) { pill.classList.add('err'); pill.textContent = 'Sheet sync error'; pill.title = s.lastError; return; }
-  if (s.pending) { pill.classList.add('pending'); pill.textContent = `Syncing ${s.pending}…`; return; }
+  if (!state.settings.sheetUrl) { pill.textContent = 'Connect Google'; pill.title = 'Click to connect your Google Sheet & Calendar'; return; }
+  if (s.lastError) { pill.classList.add('err'); pill.textContent = 'Google needs attention'; pill.title = s.lastError; return; }
+  if (s.pending) { pill.classList.add('pending'); pill.textContent = 'Saving to Google…'; return; }
   pill.classList.add('ok');
-  pill.textContent = s.lastSyncAt ? `Synced ${new Date(s.lastSyncAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Sheet connected';
-  pill.title = 'Google Sheet sync is on';
+  pill.textContent = 'Saved to Google';
+  pill.title = s.lastSyncAt ? `Last saved ${new Date(s.lastSyncAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Connected';
 }
+$('#sync-pill').onclick = () => (state.settings.sheetUrl ? show('settings') : openGoogleGuide());
 
 let timerTick = null;
 function renderTimer() {
@@ -329,11 +334,11 @@ function renderLog() {
     .filter((e) => !q || [e.project, e.task, e.workDone, e.notes, e.category].join(' ').toLowerCase().includes(q))
     .sort((a, b) => (a.date === b.date ? (a.createdAt < b.createdAt ? 1 : -1) : a.date < b.date ? 1 : -1));
   $('#log-body').innerHTML = es.length ? es.map((e) => `
-    <tr data-entry="${e.id}">
-      <td>${fmtDate(e.date)}</td><td>${h(displayProject(e.project))}</td><td>${h(e.task)}</td>
-      <td class="wd">${h(e.workDone)}</td><td>${e.category ? `<span class="tag">${h(e.category)}</span>` : ''}</td>
-      <td class="num">${fmtNum(e.hours)}</td><td>${h(e.notes)}</td><td><button class="link">Edit</button></td>
-    </tr>`).join('') : '<tr><td colspan="8" class="empty">No entries for this filter.</td></tr>';
+    <tr data-entry="${e.id}" title="Click to change">
+      <td class="nowrap">${fmtDate(e.date)}</td><td>${h(displayProject(e.project))}</td>
+      <td class="wd">${h(e.workDone || e.task)}</td><td>${e.category ? `<span class="tag">${h(e.category)}</span>` : ''}</td>
+      <td class="num">${fmtNum(e.hours)}</td><td>${h(e.notes)}</td>
+    </tr>`).join('') : '<tr><td colspan="6" class="empty">Nothing here yet. Try “Everything” in the Show menu, or click “+ Log work”.</td></tr>';
   $('#log-total').textContent = fmtNum(sum(es, (e) => e.hours));
 }
 
@@ -403,7 +408,7 @@ function fillProjectSelects() {
   }
   const cat = $('#log-category');
   const cv = cat.value;
-  cat.innerHTML = '<option value="">All categories</option>' + (state.settings.categories || []).map((c) => `<option>${h(c)}</option>`).join('');
+  cat.innerHTML = '<option value="">All types</option>' + (state.settings.categories || []).map((c) => `<option>${h(c)}</option>`).join('');
   cat.value = cv;
 }
 
@@ -411,26 +416,59 @@ function fillProjectSelects() {
 
 const dlg = $('#entry-dialog');
 let editingId = null;
+function syncEntryChips() {
+  const f = $('#entry-form');
+  const hrs = parseFloat(f.hours.value);
+  $$('#time-chips [data-h]').forEach((b) => b.classList.toggle('on', parseFloat(b.dataset.h) === hrs));
+  $$('#project-chips [data-p]').forEach((b) => b.classList.toggle('on', b.dataset.p === f.project.value));
+}
+
 function openEntry(entry = null) {
   editingId = entry?.id || null;
   const f = $('#entry-form');
-  $('#entry-dialog-title').textContent = editingId ? 'Edit entry' : 'Log work';
-  f.category.innerHTML = categoryOptions(entry?.category || state.settings.defaultCategory);
+  $('#entry-dialog-title').textContent = editingId ? '✏️ Change this entry' : '🌷 Log work';
+  // New entries: leave the type blank and let Jarvis decide from the words.
+  f.category.innerHTML = categoryOptions(entry?.category || '').replace('(none)', '✨ Let Jarvis decide');
   f.date.value = entry?.date || isoDate();
   f.hours.value = entry?.hours ?? '';
   for (const k of ['project', 'task', 'workDone', 'notes']) f[k].value = entry?.[k] || '';
+  $('#project-chips').innerHTML = (state.settings.projects || [])
+    .map((p) => `<button type="button" data-p="${h(p)}">${h(displayProject(p))}</button>`).join('');
+  $('.more', f).open = false;
   $('#entry-delete').hidden = !editingId;
+  syncEntryChips();
   dlg.showModal();
+  if (!editingId) f.workDone.focus();
 }
+$('#time-chips').onclick = (ev) => {
+  const b = ev.target.closest('[data-h]');
+  if (!b) return;
+  $('#entry-form').hours.value = b.dataset.h;
+  syncEntryChips();
+};
+$('#project-chips').onclick = (ev) => {
+  const b = ev.target.closest('[data-p]');
+  if (!b) return;
+  const f = $('#entry-form');
+  f.project.value = f.project.value === b.dataset.p ? '' : b.dataset.p;
+  syncEntryChips();
+};
+$('#entry-form').hours.oninput = syncEntryChips;
+$('#entry-form').project.oninput = syncEntryChips;
 $('#entry-cancel').onclick = () => dlg.close();
 $('#entry-form').onsubmit = async (ev) => {
   ev.preventDefault();
   const f = ev.target;
+  const s = state.settings;
+  const workDone = f.workDone.value.trim();
   const data = {
-    date: f.date.value, hours: parseFloat(f.hours.value), project: f.project.value.trim(), task: f.task.value.trim(),
-    workDone: f.workDone.value.trim(), category: f.category.value, notes: f.notes.value.trim(),
+    date: f.date.value || isoDate(), hours: parseFloat(f.hours.value), project: f.project.value.trim(),
+    task: f.task.value.trim() || shortTask(workDone), workDone,
+    category: f.category.value || guessCategory(`${workDone} ${f.notes.value}`, s.keywords, s.categories) || s.defaultCategory || '',
+    notes: f.notes.value.trim(),
   };
-  if (!data.task && !data.workDone) { toast('Add a task or a description'); return; }
+  if (!data.workDone && !data.task) { toast('✏️ Write a few words about what you did'); f.workDone.focus(); return; }
+  if (!(data.hours > 0)) { toast('⏱ Pick how long it took'); return; }
   if (editingId) await actions.updateEntry(editingId, data); else await actions.addEntry(data);
   dlg.close();
   if (editingId) toast('Entry updated ✏️');
@@ -521,11 +559,67 @@ function textToKeywords(text) {
   return { categories, keywords };
 }
 
+// Projects as friendly chips instead of a text box.
+function renderProjectEditor(projects) {
+  const f = $('#settings-form');
+  f.projects.value = JSON.stringify(projects);
+  $('#project-editor').innerHTML = `
+    ${projects.map((p, i) => `<span class="pchip">${h(displayProject(p))}<button type="button" data-remove="${i}" title="Remove">✕</button></span>`).join('')}
+    <span class="padd"><input id="project-add" placeholder="Add a project or client…"><button type="button" class="btn primary small" id="project-add-btn">+ Add</button></span>`;
+}
+$('#project-editor').addEventListener('click', (ev) => {
+  const projects = JSON.parse($('#settings-form').projects.value || '[]');
+  const rm = ev.target.closest('[data-remove]');
+  if (rm) {
+    const name = projects[Number(rm.dataset.remove)];
+    if (!confirm(`Remove "${displayProject(name)}" from your projects? (Work you already logged stays.)`)) return;
+    projects.splice(Number(rm.dataset.remove), 1);
+    renderProjectEditor(projects);
+    saveSettings();
+  }
+  if (ev.target.id === 'project-add-btn') addProjectFromInput();
+});
+$('#project-editor').addEventListener('keydown', (ev) => {
+  if (ev.target.id === 'project-add' && ev.key === 'Enter') { ev.preventDefault(); addProjectFromInput(); }
+});
+function addProjectFromInput() {
+  const inp = $('#project-add');
+  const name = inp.value.trim();
+  if (!name) return;
+  const projects = JSON.parse($('#settings-form').projects.value || '[]');
+  if (!projects.some((p) => p.toLowerCase() === name.toLowerCase())) projects.push(name);
+  renderProjectEditor(projects);
+  $('#project-add').focus();
+  saveSettings();
+}
+
+function renderGoogleStatus() {
+  const s = state.settings;
+  const el = $('#google-status');
+  const f = $('#settings-form');
+  for (const n of ['calendarEnabled', 'meetingPrompts']) f[n].closest('label').hidden = !s.sheetUrl;
+  $('#sync-test').hidden = !s.sheetUrl;
+  if (!s.sheetUrl) {
+    el.className = 'google-status off';
+    el.innerHTML = '<b>Not connected yet.</b> Connect once and Jarvis will copy your work into your Google Sheet and show your calendar meetings.';
+    $('#google-connect').textContent = '🔗 Connect Google';
+    return;
+  }
+  const err = state.sync?.lastError;
+  el.className = `google-status ${err ? 'err' : 'on'}`;
+  el.innerHTML = err
+    ? `<b>⚠️ Something needs fixing.</b> ${h(err)}`
+    : `<b>✅ Connected.</b> Your work is being saved to your Google Sheet${s.calendarEnabled ? ' and your meetings show on Home' : ''}.`;
+  $('#google-connect').textContent = err ? '🔧 Fix the connection' : 'Set up again';
+}
+
 function renderSettings() {
   const s = state.settings;
   const f = $('#settings-form');
   f.userName.value = s.userName || '';
-  f.projects.value = (s.projects || []).join('\n');
+  renderProjectEditor(s.projects || []);
+  renderGoogleStatus();
+  f.sheetLink.value = s.sheetLink || '';
   f.keywords.value = keywordsToText(s.categories || [], s.keywords || {});
   f.defaultCategory.innerHTML = categoryOptions(s.defaultCategory);
   for (const k of ['speakReplies', 'autoBrief', 'notesToTodos', 'autoSaveVoiceLogs', 'calendarEnabled', 'calendarAll', 'meetingPrompts']) f[k].checked = !!s[k];
@@ -538,13 +632,26 @@ function renderSettings() {
   f.voiceName.innerHTML = '<option value="">Automatic</option>' + voices.map((v) => `<option ${v.name === s.voiceName ? 'selected' : ''} value="${h(v.name)}">${h(v.name)} (${h(v.lang)})</option>`).join('');
 }
 
-$('#settings-form').onsubmit = async (ev) => {
-  ev.preventDefault();
-  const f = ev.target;
+// Settings save themselves: no Save button to forget.
+let saveTimer = null;
+const settingsForm = $('#settings-form');
+settingsForm.addEventListener('change', (ev) => { if (ev.target.id !== 'project-add') saveSettings(); });
+settingsForm.addEventListener('input', (ev) => {
+  if (['userName', 'keywords', 'sheetUrl', 'sheetLink'].includes(ev.target.name)) {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveSettings, 800);
+  }
+});
+
+async function saveSettings() {
+  clearTimeout(saveTimer);
+  const f = settingsForm;
   const { categories, keywords } = textToKeywords(f.keywords.value);
+  const prevCal = state.settings.calendarEnabled;
   const body = {
     userName: f.userName.value.trim(),
-    projects: f.projects.value.split('\n').map((s) => s.trim()).filter(Boolean),
+    projects: JSON.parse(f.projects.value || '[]'),
+    sheetLink: f.sheetLink.value.trim(),
     categories, keywords,
     defaultCategory: f.defaultCategory.value,
     speakReplies: f.speakReplies.checked, autoBrief: f.autoBrief.checked, notesToTodos: f.notesToTodos.checked,
@@ -554,13 +661,15 @@ $('#settings-form').onsubmit = async (ev) => {
     voiceName: f.voiceName.value, checkInMinutes: Number(f.checkInMinutes.value),
     workStart: f.workStart.value, workEnd: f.workEnd.value, sheetUrl: f.sheetUrl.value.trim(),
   };
+  if (!categories.length) { toast('The types of work list can’t be empty'); return; }
   await api('PATCH', 'settings', body);
-  loadCalendar(true);
-  renderSettings();
-  $('#settings-msg').textContent = 'Saved ✓';
-  setTimeout(() => { $('#settings-msg').textContent = ''; }, 2500);
+  if (body.calendarEnabled !== prevCal || body.calendarEnabled) loadCalendar(body.calendarEnabled !== prevCal);
+  renderGoogleStatus();
+  $('#settings-msg').textContent = '✓ Saved';
+  clearTimeout(saveSettings.t);
+  saveSettings.t = setTimeout(() => { $('#settings-msg').textContent = ''; }, 2000);
   if (body.checkInMinutes && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission();
-};
+}
 
 $('#voice-test').onclick = () => {
   voice.voiceName = $('#settings-form').voiceName.value;
@@ -585,7 +694,10 @@ $('#sync-all').onclick = async () => {
 // ------------------------------------------------------------------ navigation & controls
 
 function show(view) {
+  if (!$(`#view-${view}`)) view = 'today';
   $$('.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
+  $('#settings-btn').classList.toggle('active', view === 'settings');
+  window.scrollTo({ top: 0 });
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${view}`));
   if (view === 'log') renderLog();
   if (view === 'dashboard') renderDashboard();
@@ -593,6 +705,7 @@ function show(view) {
   location.hash = view;
 }
 $$('.tabs button').forEach((b) => { b.onclick = () => show(b.dataset.view); });
+$('#settings-btn').onclick = () => show('settings');
 document.addEventListener('click', (ev) => { const g = ev.target.closest('[data-goto]'); if (g) show(g.dataset.goto); });
 
 ['#log-period', '#log-project', '#log-category'].forEach((s) => { $(s).onchange = renderLog; });
@@ -628,6 +741,436 @@ document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape') voice.stopSpeaking();
 });
 
+// ------------------------------------------------------------------ Home: greeting & big buttons
+
+function renderHello() {
+  const now = new Date();
+  const hr = now.getHours();
+  const part = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
+  const flower = hr < 12 ? '🌷' : hr < 17 ? '🌻' : '🌙';
+  const name = state.settings.userName;
+  const t = isoDate(now);
+  const hrs = sum(state.entries.filter((e) => e.date === t), (e) => e.hours);
+  const open = state.todos.filter((x) => !x.done).length;
+  const bits = [hrs ? `${fmtHours(hrs)} logged today` : 'Nothing logged yet today', `${open} ${open === 1 ? 'to-do' : 'to-dos'}`];
+  $('#hello').innerHTML = `<h1>${part}${name ? `, ${h(name)}` : ''} ${flower}</h1><p>${bits.join(' · ')}</p>`;
+  $('#chip-meetings').hidden = !state.settings.calendarEnabled;
+}
+
+$('#qa-talk').onclick = () => { $('#jarvis-panel').scrollIntoView({ behavior: 'smooth', block: 'center' }); voice.toggle(); };
+$('#qa-log').onclick = () => openEntry();
+$('#qa-timer').onclick = () => {
+  const inp = $('#timer-form [name=task]');
+  if (!inp) { toast('A timer is already running. Press “Stop & log” when you’re done.'); $('#timer-panel').scrollIntoView({ block: 'center' }); return; }
+  inp.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  inp.focus();
+  $('#timer-panel').classList.add('flash');
+  setTimeout(() => $('#timer-panel').classList.remove('flash'), 1200);
+};
+$('#qa-todo').onclick = () => {
+  const inp = $('#quick-todo-input');
+  inp.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  inp.focus();
+  $('#todo-panel').classList.add('flash');
+  setTimeout(() => $('#todo-panel').classList.remove('flash'), 1200);
+};
+
+// ------------------------------------------------------------------ step-by-step guides (one instruction per screen)
+
+const guideDlg = $('#guide-dialog');
+let guide = null; // { steps, i, onDone }
+
+function runGuide(steps, onDone) {
+  guide = { steps, i: 0, onDone };
+  renderGuideStep();
+  if (!guideDlg.open) guideDlg.showModal();
+}
+
+function renderGuideStep() {
+  const { steps, i } = guide;
+  const st = steps[i];
+  $('#guide-progress').innerHTML = steps.map((_, k) => `<span class="${k < i ? 'done' : k === i ? 'now' : ''}"></span>`).join('');
+  $('#guide-body').innerHTML = `${st.emoji ? `<div class="guide-emoji">${st.emoji}</div>` : ''}<h2>${st.title}</h2>${st.html || ''}`;
+  $('#guide-back').style.visibility = i === 0 || st.noBack ? 'hidden' : 'visible';
+  $('#guide-skip').hidden = !st.skip;
+  $('#guide-skip').textContent = st.skip || 'Skip';
+  $('#guide-next').textContent = st.nextLabel || (i === steps.length - 1 ? 'Finish 🌸' : 'Next →');
+  $('#guide-next').hidden = !!st.hideNext;
+  $('#guide-next').disabled = false;
+  st.onShow?.($('#guide-body'));
+  const first = $('#guide-body input');
+  if (first) setTimeout(() => first.focus(), 50);
+}
+
+async function guideNext() {
+  const st = guide.steps[guide.i];
+  if (st.onNext) {
+    $('#guide-next').disabled = true;
+    const ok = await st.onNext($('#guide-body'));
+    $('#guide-next').disabled = false;
+    if (ok === false || !guide) return;
+  }
+  if (guide.i >= guide.steps.length - 1) return endGuide(true);
+  guide.i += 1;
+  renderGuideStep();
+}
+function endGuide(finished) {
+  voiceCapture = null;
+  const done = guide?.onDone;
+  guide = null;
+  guideDlg.close();
+  done?.(finished);
+}
+$('#guide-next').onclick = guideNext;
+$('#guide-back').onclick = () => { if (guide.i > 0) { guide.i -= 1; renderGuideStep(); } };
+$('#guide-skip').onclick = async () => {
+  const st = guide.steps[guide.i];
+  if (st.onSkip) return st.onSkip();
+  if (guide.i >= guide.steps.length - 1) return endGuide(false);
+  guide.i += 1;
+  renderGuideStep();
+};
+guideDlg.addEventListener('cancel', (ev) => { ev.preventDefault(); if (confirm('Close this setup? You can finish it later from ❓ Help.')) endGuide(false); });
+guideDlg.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter' && ev.target.tagName === 'INPUT' && !ev.target.dataset.enterAdd) { ev.preventDefault(); guideNext(); }
+});
+
+const kbd = (k) => `<kbd>${k}</kbd>`;
+const ui = (t, cls = '') => `<span class="ui ${cls}">${t}</span>`;
+
+// ---- Welcome (first time only)
+
+function openWelcome() {
+  welcomeFlow.thenGoogle = false;
+  welcomeFlow.thenTour = false;
+  let projects = (state.settings.projects || []).filter((p) => !/^example:/i.test(p));
+  const drawProjects = (body) => {
+    $('.wz-chips', body).innerHTML = projects.length
+      ? projects.map((p, i) => `<span class="pchip">${h(p)}<button type="button" data-i="${i}">✕</button></span>`).join('')
+      : '<span class="muted">No projects yet. Add one above.</span>';
+  };
+  runGuide([
+    {
+      emoji: '🌸', title: "Hi! I'm Jarvis.",
+      html: `<p class="lead">I'll help you keep track of everything you do in your workday, so your timesheets, reports and to-dos take care of themselves.</p>
+             <p>Setting me up takes about <b>2 minutes</b>.</p>`,
+      nextLabel: "Let's go →", noBack: true,
+    },
+    {
+      emoji: '👋', title: "What's your first name?",
+      html: `<input class="big-input" id="wz-name" placeholder="Your first name" value="${h(state.settings.userName || '')}">`,
+      onNext: async (body) => {
+        const name = $('#wz-name', body).value.trim();
+        if (!name) { toast('Type your first name 🙂'); return false; }
+        await api('PATCH', 'settings', { userName: name });
+        return true;
+      },
+    },
+    {
+      emoji: '🌷', title: 'What projects or clients do you work on?',
+      html: `<p>Add each one. I'll listen for these names when you talk to me.</p>
+             <div class="row"><input class="big-input" id="wz-proj" data-enter-add="1" placeholder="e.g. Acme Corp Rebrand"><button type="button" class="btn primary" id="wz-proj-add">+ Add</button></div>
+             <div class="wz-chips"></div>
+             <p class="muted">You can change these anytime in ⚙️ Settings.</p>`,
+      onShow: (body) => {
+        drawProjects(body);
+        const add = () => {
+          const inp = $('#wz-proj', body);
+          const v = inp.value.trim();
+          if (v && !projects.some((p) => p.toLowerCase() === v.toLowerCase())) projects.push(v);
+          inp.value = '';
+          inp.focus();
+          drawProjects(body);
+        };
+        $('#wz-proj-add', body).onclick = add;
+        $('#wz-proj', body).onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); add(); } };
+        $('.wz-chips', body).onclick = (ev) => {
+          const b = ev.target.closest('[data-i]');
+          if (b) { projects.splice(Number(b.dataset.i), 1); drawProjects(body); }
+        };
+      },
+      onNext: async (body) => {
+        const pending = $('#wz-proj', body).value.trim();
+        if (pending && !projects.includes(pending)) projects.push(pending);
+        if (!projects.length) { toast('Add at least one project, or click Skip'); return false; }
+        await api('PATCH', 'settings', { projects });
+        return true;
+      },
+      skip: 'Skip for now',
+    },
+    {
+      emoji: '🎤', title: "Let's test your microphone",
+      html: `<p>Click the flower, then say <b>“Hello Jarvis”</b>.</p>
+             <button type="button" class="mic wz-mic" id="wz-mic"><span class="mic-ring"></span><svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg></button>
+             <p class="heard" id="wz-heard">If your browser asks to use the microphone, click <b>Allow</b>.</p>
+             <label class="check"><input type="checkbox" id="wz-speak" ${state.settings.speakReplies ? 'checked' : ''}> Jarvis talks back out loud</label>`,
+      onShow: (body) => {
+        if (!voice.supported) {
+          $('#wz-heard', body).innerHTML = '🎧 Talking needs <b>Google Chrome</b>. You can still type everything, so this step is optional.';
+        }
+        $('#wz-mic', body).onclick = () => {
+          voiceCapture = (t) => {
+            $('#wz-heard', body).innerHTML = `✅ I heard: <b>“${h(t)}”</b>. Your microphone works!`;
+            celebrate($('#wz-mic', body));
+            voice.speak(`Hello${state.settings.userName ? ` ${state.settings.userName}` : ''}! I can hear you perfectly.`, $('#wz-speak', body).checked);
+          };
+          voice.toggle();
+        };
+        $('#wz-speak', body).onchange = (ev) => api('PATCH', 'settings', { speakReplies: ev.target.checked });
+      },
+      onNext: async () => { voiceCapture = null; return true; },
+      skip: 'Skip',
+    },
+    {
+      emoji: '🔗', title: 'Connect your Google Sheet and Calendar?',
+      html: `<p>Then everything you log is also saved in your Google Sheet, and your meetings show up in Jarvis.</p>
+             <p class="muted">Optional. It takes about 3 minutes and I'll walk you through every click. You can also do it later from ⚙️ Settings.</p>`,
+      nextLabel: 'Yes, connect Google',
+      onNext: async () => { welcomeFlow.thenGoogle = true; endGuide(true); return false; },
+      skip: 'Maybe later',
+    },
+    {
+      emoji: '🎉', title: "You're all set!",
+      html: `<p class="lead">Here's all you need to know:</p>
+             <ul class="tips">
+               <li>🎤 <b>Tap the flower</b> and tell me what you did, like “30 minutes pitching Axios for Spring Launch”.</li>
+               <li>📝 Or use the big <b>Log work</b> button.</li>
+               <li>❓ Stuck? Click <b>Help</b> at the top right anytime.</li>
+             </ul>`,
+      nextLabel: 'Show me around 🧭',
+      skip: 'Start using Jarvis',
+      onSkip: () => endGuide(true),
+      onNext: async () => { welcomeFlow.thenTour = true; return true; },
+    },
+  ], async () => {
+    await api('PATCH', 'meta', { onboarded: true });
+    renderAll();
+    if (welcomeFlow.thenGoogle) openGoogleGuide();
+    else if (welcomeFlow.thenTour) startTour();
+    else celebrate();
+  });
+}
+// Choices made in the welcome guide ("connect Google next", "show me around").
+const welcomeFlow = {};
+
+// ---- Connect Google (Sheet + Calendar), one click per screen
+
+function openGoogleGuide() {
+  let copied = false;
+  runGuide([
+    {
+      emoji: '🔗', title: 'Connect Google',
+      html: `<p class="lead">This lets Jarvis save your work into your Google Sheet and show your calendar meetings.</p>
+             <ul class="tips"><li>⏱ About 3 minutes</li><li>🖱 You'll copy and paste one thing and click a few buttons</li><li>🔒 Only you can use the connection, and Jarvis can't change your calendar</li></ul>
+             <p class="muted">Tip: keep this box open. I'll tell you exactly where to click.</p>`,
+      nextLabel: "Let's start →", noBack: true,
+    },
+    {
+      emoji: '📗', title: 'Open your Google Sheet',
+      html: `<p>Paste the link to your work tracker sheet (copy it from the address bar when the sheet is open):</p>
+             <input class="big-input" id="g-sheet" placeholder="https://docs.google.com/spreadsheets/d/…" value="${h(state.settings.sheetLink || '')}">
+             <p><button type="button" class="btn primary" id="g-open-sheet">📗 Open my sheet</button>
+             <span class="muted"> or <a href="https://sheets.new" target="_blank" rel="noopener">start a new blank sheet</a></span></p>`,
+      onShow: (body) => {
+        $('#g-open-sheet', body).onclick = async () => {
+          const link = $('#g-sheet', body).value.trim();
+          if (!/^https:\/\/docs\.google\.com\/spreadsheets\//.test(link)) { toast('Paste your sheet link first. It starts with https://docs.google.com/spreadsheets'); return; }
+          await api('PATCH', 'settings', { sheetLink: link });
+          window.open(link, '_blank', 'noopener');
+        };
+      },
+      onNext: async (body) => {
+        const link = $('#g-sheet', body).value.trim();
+        if (link && /^https:\/\/docs\.google\.com\/spreadsheets\//.test(link)) await api('PATCH', 'settings', { sheetLink: link });
+        return true;
+      },
+    },
+    {
+      emoji: '🧩', title: 'Open Apps Script',
+      html: `<p>In your Google Sheet, look at the menu along the top and click:</p>
+             <div class="mock-menu">${ui('File')}${ui('Edit')}${ui('View')}${ui('Insert')}${ui('Format')}${ui('Data')}${ui('Tools')}${ui('Extensions', 'hl')}${ui('Help')}</div>
+             <div class="mock-drop">${ui('Add-ons')}${ui('Macros')}${ui('Apps Script', 'hl')}</div>
+             <p><b>Extensions → Apps Script</b>. A new tab opens with a code editor.</p>`,
+    },
+    {
+      emoji: '📋', title: 'Copy and paste the code',
+      html: `<p><b>Step 1.</b> Click this button:</p>
+             <p><button type="button" class="btn primary big" id="g-copy">📋 Copy the code</button> <span id="g-copied" class="ok-note"></span></p>
+             <p><b>Step 2.</b> In the Apps Script tab, click inside the code area, then press ${kbd('⌘ Cmd')} + ${kbd('A')} to select everything, then ${kbd('⌘ Cmd')} + ${kbd('V')} to paste.</p>
+             <p><b>Step 3.</b> Click the save icon ${ui('💾')} (or press ${kbd('⌘ Cmd')} + ${kbd('S')}).</p>`,
+      onShow: (body) => {
+        $('#g-copy', body).onclick = async () => {
+          const code = await (await fetch('/api/apps-script')).text();
+          await navigator.clipboard.writeText(code);
+          copied = true;
+          $('#g-copied', body).textContent = '✓ Copied!';
+        };
+      },
+      onNext: async () => { if (!copied) { toast('Click “Copy the code” first 📋'); return false; } return true; },
+    },
+    {
+      emoji: '🚀', title: 'Turn it on',
+      html: `<ol class="click-steps">
+               <li>Click the blue ${ui('Deploy', 'blue')} button at the top right, then ${ui('New deployment')}.</li>
+               <li>Click the gear ${ui('⚙️')} next to “Select type”, then choose ${ui('Web app')}.</li>
+               <li>Under “Who has access”, change it to ${ui('Anyone', 'hl')}.</li>
+               <li>Click ${ui('Deploy', 'blue')}.</li>
+             </ol>`,
+    },
+    {
+      emoji: '✅', title: 'Give permission',
+      html: `<p>Google will ask you to allow the script you just pasted. It's yours, so this is safe:</p>
+             <ol class="click-steps">
+               <li>Click ${ui('Authorize access')} and choose your Google account.</li>
+               <li>If you see <i>“Google hasn't verified this app”</i>, that's normal for your own scripts. Click ${ui('Advanced')}, then ${ui('Go to … (unsafe)')}.</li>
+               <li>Click ${ui('Allow', 'blue')}.</li>
+             </ol>`,
+    },
+    {
+      emoji: '🔑', title: 'Paste the link here',
+      html: `<p>Google now shows a <b>Web app</b> link. Click ${ui('Copy')} under it, then paste it here:</p>
+             <input class="big-input" id="g-url" placeholder="https://script.google.com/macros/s/…/exec">
+             <div class="check-list" id="g-checks"></div>`,
+      nextLabel: 'Check it',
+      onShow: (body) => {
+        const inp = $('#g-url', body);
+        inp.addEventListener('paste', () => setTimeout(() => guideNext(), 50));
+      },
+      onNext: async (body) => {
+        const url = $('#g-url', body).value.trim();
+        const checks = $('#g-checks', body);
+        // (localhost is allowed only so the guide can be tested without Google)
+        if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec|^http:\/\/(127\.0\.0\.1|localhost):\d+\//.test(url)) {
+          checks.innerHTML = '<p class="bad">That doesn\'t look right. The link should start with <b>https://script.google.com/macros/s/</b> and end with <b>/exec</b>.</p>';
+          return false;
+        }
+        checks.innerHTML = '<p>⏳ Checking your Google Sheet…</p>';
+        const previousUrl = state.settings.sheetUrl || '';
+        await api('PATCH', 'settings', { sheetUrl: url });
+        try {
+          await api('POST', 'sync/test');
+        } catch (err) {
+          await api('PATCH', 'settings', { sheetUrl: previousUrl }); // don't leave a broken link saved
+          checks.innerHTML = `<p class="bad">❌ Couldn't reach your sheet: ${h(err.message)}</p><p class="muted">Check that “Who has access” was set to <b>Anyone</b>. You can click Back to see the steps again.</p>`;
+          return false;
+        }
+        checks.innerHTML = '<p>✅ Google Sheet connected!</p><p>⏳ Checking your calendar…</p>';
+        await api('PATCH', 'settings', { calendarEnabled: true });
+        const c = await loadCalendar(true);
+        checks.innerHTML = c.error
+          ? '<p>✅ Google Sheet connected!</p><p class="bad">⚠️ Calendar didn\'t connect. That\'s OK, your sheet works. You can try again later from Settings.</p>'
+          : `<p>✅ Google Sheet connected!</p><p>✅ Calendar connected (${meetingsOn(c.events, isoDate()).length} meetings today)</p>`;
+        if (c.error) await api('PATCH', 'settings', { calendarEnabled: false });
+        api('POST', 'sync/all').catch(() => {}); // copy existing work into the sheet
+        celebrate($('#g-checks', body));
+        await new Promise((r) => setTimeout(r, 1200));
+        return true;
+      },
+    },
+    {
+      emoji: '🎉', title: "You're connected!",
+      html: `<ul class="tips"><li>📗 Everything you log is saved in your Google Sheet automatically.</li>
+             <li>📅 Your meetings appear on Home, and I'll ask to log them when they end.</li></ul>`,
+      noBack: true,
+    },
+  ], () => { renderAll(); renderSettings(); });
+}
+
+// ---- Guided tour (spotlight + bubble)
+
+const TOUR = [
+  ['#quick-actions', '👆 <b>These big buttons</b> are the quickest way to do anything: talk, log work, start a timer or add a to-do.'],
+  ['#mic-btn', '🌼 <b>Tap the flower and just talk.</b> Say things like “I spent an hour drafting the Acme press release”.'],
+  ['#ask-form', '⌨️ Prefer typing? <b>Type here</b> instead, in normal words.'],
+  ['#today-panel', '📝 <b>Everything you did today</b> shows up here. Click any item to change it.'],
+  ['#todo-panel', '✅ <b>Your to-dos.</b> Tick the circle when something is done.'],
+  ['#main-tabs', '🗂 <b>Switch pages here.</b> My Work = everything you logged · To-Dos = your full list · Insights = charts and reports.'],
+  ['#help-btn', '❓ <b>Lost?</b> Click Help anytime to see this tour again.'],
+];
+let tourI = -1;
+function startTour() { show('today'); tourI = -1; nextTour(); }
+function clearTourFocus() { $$('.tour-focus').forEach((x) => x.classList.remove('tour-focus')); }
+function nextTour() {
+  clearTourFocus();
+  tourI += 1;
+  const b = $('#tour-bubble');
+  if (tourI >= TOUR.length) { b.hidden = true; toast('You’re ready! 🌸'); return; }
+  const [sel, text] = TOUR[tourI];
+  const el = $(sel);
+  el.classList.add('tour-focus');
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  $('#tour-text').innerHTML = text;
+  $('#tour-count').textContent = `${tourI + 1} of ${TOUR.length}`;
+  $('#tour-next').textContent = tourI === TOUR.length - 1 ? 'Finish' : 'Next →';
+  b.hidden = false;
+  setTimeout(() => {
+    const r = el.getBoundingClientRect();
+    const bw = b.offsetWidth;
+    const below = r.bottom + 16 + b.offsetHeight < window.innerHeight;
+    b.style.top = `${below ? r.bottom + 14 : Math.max(10, r.top - b.offsetHeight - 14)}px`;
+    b.style.left = `${Math.min(window.innerWidth - bw - 12, Math.max(12, r.left + r.width / 2 - bw / 2))}px`;
+  }, 350);
+}
+$('#tour-next').onclick = nextTour;
+$('#tour-end').onclick = () => { clearTourFocus(); $('#tour-bubble').hidden = true; };
+
+// ---- Help
+
+const helpDlg = $('#help-dialog');
+$('#help-btn').onclick = () => {
+  $('#help-commands').innerHTML = HELP.sections.map((s) => `<div class="help-sec"><h4>${h(s.heading)}</h4><ul>${s.items.map((i) => `<li>${h(i)}</li>`).join('')}</ul></div>`).join('');
+  helpDlg.showModal();
+};
+$('#help-close').onclick = () => helpDlg.close();
+$('#help-tour').onclick = () => { helpDlg.close(); startTour(); };
+$('#help-google').onclick = () => { helpDlg.close(); openGoogleGuide(); };
+$('#google-connect').onclick = () => openGoogleGuide();
+$('#rerun-welcome').onclick = () => openWelcome();
+
+// ---- Updates
+
+async function checkForUpdates(manual = false) {
+  try {
+    const r = await (await fetch('/api/update/check')).json();
+    $('#version-line').textContent = `You have version ${r.current}.`;
+    if (manual) {
+      $('#update-msg').textContent = r.error ? r.error
+        : r.available ? `Version ${r.latest} is ready.` : 'You have the newest version 🌸';
+    }
+    const dismissed = localStorage.getItem('jarvis.updateDismissed') === r.latest;
+    $('#update-banner').hidden = !(r.available && (manual || !dismissed));
+    $('#update-now').dataset.installed = r.installed ? '1' : '';
+    return r;
+  } catch { return null; }
+}
+$('#update-check').onclick = () => checkForUpdates(true);
+$('#update-later').onclick = async () => {
+  const r = await (await fetch('/api/update/check')).json();
+  localStorage.setItem('jarvis.updateDismissed', r.latest);
+  $('#update-banner').hidden = true;
+};
+$('#update-now').onclick = async () => {
+  if (!$('#update-now').dataset.installed) {
+    alert('This copy of Jarvis was set up by hand, so it can’t update itself.\n\nTo switch to the easy version, run the one-line installer from the README. Your work is kept.');
+    return;
+  }
+  $('#update-banner').innerHTML = '⏳ Updating Jarvis… this takes a few seconds.';
+  try {
+    const res = await fetch('/api/update', { method: 'POST' });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error);
+  } catch (err) {
+    $('#update-banner').innerHTML = `❌ ${h(err.message)}`;
+    return;
+  }
+  // Wait for Jarvis to come back, then reload.
+  for (let i = 0; i < 40; i++) {
+    await new Promise((r) => setTimeout(r, 750));
+    try { if ((await fetch('/api/version')).ok && i > 1) { location.reload(); return; } } catch { /* restarting */ }
+  }
+  location.reload();
+};
+
 // ------------------------------------------------------------------ Google Calendar meetings
 
 async function loadCalendar(refresh = false) {
@@ -662,7 +1205,7 @@ function renderMeetings() {
     const logged = isMeetingLogged(ev, state.entries);
     const action = logged
       ? '<span class="logged">✓ Logged</span>'
-      : `<button class="btn ${ended ? 'primary' : 'ghost'} small" data-log-meeting="${h(ev.id)}">Log ${fmtNum(meetingHours(ev))}h</button>`;
+      : `<button class="btn ${ended ? 'primary' : 'ghost'} small" data-log-meeting="${h(ev.id)}">Log ${fmtHours(meetingHours(ev))}</button>`;
     return `<li class="${cls}"><span class="when">${fmtTime(ev.start)}</span>
       <div class="t"><b>${h(ev.title)}</b><span class="meta">${fmtHours(meetingHours(ev))}${ev.location ? ` · ${h(ev.location)}` : ''}${ev.guests ? ` · ${ev.guests} guests` : ''}</span></div>${action}</li>`;
   }).join('') : (calendar.error ? '' : '<li class="empty">No meetings today. Lots of time to make things bloom 🌷</li>');
@@ -764,21 +1307,30 @@ async function boot() {
   show((location.hash || '#today').slice(1) || 'today');
   await loadCalendar();
   const today = isoDate();
-  if (state.settings.autoBrief && state.meta?.lastBriefDate !== today) {
+  const firstTime = !state.meta?.onboarded && !state.settings.userName;
+  if (firstTime) {
+    jarvisSay({ speech: "Hi! I'm Jarvis 🌸 Let's get you set up." }, false);
+    openWelcome();
+  } else if (state.settings.autoBrief && state.meta?.lastBriefDate !== today) {
     await api('PATCH', 'meta', { lastBriefDate: today });
     jarvisSay(morningBrief(full()));
   } else {
     const name = state.settings.userName;
-    jarvisSay({ speech: `Hi${name ? ` ${name}` : ''}, I'm ready. Tell me what you've worked on, start a timer, or say "help".` }, false);
+    jarvisSay({ speech: `Hi${name ? ` ${name}` : ''}! Tap the flower and tell me what you worked on, or use the big buttons above.` }, false);
   }
   setInterval(rhythmTick, 60000);
   setInterval(() => loadCalendar(), 5 * 60000);
   setInterval(() => { if (state.sync?.pending) api('GET', 'state'); }, 15000);
-  if (!voice.supported) jarvisSay({ speech: 'Voice input needs Google Chrome. You can still type commands below.' }, false);
+  checkForUpdates();
+  setInterval(() => checkForUpdates(), 6 * 3600 * 1000);
+  if (!voice.supported) jarvisSay({ speech: 'Talking to me works in Google Chrome. Here you can type instead, and everything else works the same.' }, false);
 }
 
-boot().catch((err) => {
-  document.body.insertAdjacentHTML('afterbegin', `<div style="padding:20px;background:#7f1d1d">Couldn't reach the Jarvis server. Is it running? (${h(err.message)})</div>`);
+boot().catch(() => {
+  document.body.innerHTML = `<div class="offline"><div class="offline-card">
+    <div style="font-size:56px">🌸</div><h1>Jarvis is taking a nap</h1>
+    <p>Jarvis isn't running right now. Double-click the <b>Jarvis</b> app on your Desktop (or in Launchpad) to wake it up.</p>
+    <button class="btn primary" onclick="location.reload()">Try again</button></div></div>`;
 });
 
 // expose for debugging in the console

@@ -5,11 +5,17 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_CATEGORY_KEYWORDS } from './public/js/parser.js';
 import { isoDate, roundHours } from './public/js/util.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
+const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+const INSTALLED = process.env.JARVIS_INSTALLED === '1'; // set by install.sh
+const REPO_RAW = 'https://raw.githubusercontent.com/Aviont3/pr-jarvis/main';
+const REPO_ZIP = 'https://github.com/Aviont3/pr-jarvis/archive/refs/heads/main.zip';
 const PUBLIC = path.join(ROOT, 'public');
 const DATA_DIR = process.env.JARVIS_DATA_DIR || path.join(ROOT, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
@@ -36,6 +42,7 @@ const DEFAULT_SETTINGS = () => ({
   workStart: '09:00',
   workEnd: '18:00',
   sheetUrl: '',
+  sheetLink: '',
   sheetToken: crypto.randomBytes(12).toString('hex'),
   calendarEnabled: false,
   calendarAll: false,
@@ -192,12 +199,19 @@ function materialize(op) {
 }
 
 async function callSheet(payload) {
-  const res = await fetch(db.settings.sheetUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ token: db.settings.sheetToken, ...payload }),
-    redirect: 'follow',
-  });
+  let res;
+  try {
+    res = await fetch(db.settings.sheetUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ token: db.settings.sheetToken, ...payload }),
+      redirect: 'follow',
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch {
+    throw new Error("Couldn't reach Google. Check the link and your internet connection.");
+  }
+  if (res.status === 404) throw new Error('Google says that link doesn’t exist. Copy the Web app link again.');
   const text = await res.text();
   let json;
   try { json = JSON.parse(text); } catch {
@@ -361,6 +375,30 @@ async function api(req, res, pathname) {
     return send(res, 200, code, MIME['.gs']);
   }
 
+  if (resource === 'version' && m === 'GET') return send(res, 200, { version: VERSION, installed: INSTALLED });
+
+  if (resource === 'update' && id === 'check' && m === 'GET') {
+    try {
+      const r = await fetch(`${REPO_RAW}/package.json`, { cache: 'no-store' });
+      const latest = (await r.json()).version;
+      return send(res, 200, { current: VERSION, latest, available: newer(latest, VERSION), installed: INSTALLED });
+    } catch {
+      return send(res, 200, { current: VERSION, latest: null, available: false, installed: INSTALLED, error: "Couldn't check for updates. Are you online?" });
+    }
+  }
+
+  if (resource === 'update' && !id && m === 'POST') {
+    if (!INSTALLED) return send(res, 400, { error: 'This copy was set up by hand. Update it with "git pull" in Terminal, or reinstall with the one-line installer.' });
+    try {
+      await installUpdate();
+      send(res, 200, { ok: true, message: 'Updated! Jarvis is restarting…' });
+      setTimeout(() => process.exit(0), 600); // the Mac restarts Jarvis automatically
+      return undefined;
+    } catch (err) {
+      return send(res, 500, { error: `Update failed: ${err.message}. Your data is safe.` });
+    }
+  }
+
   if (resource === 'backup' && m === 'GET') {
     res.writeHead(200, {
       'Content-Type': 'application/json',
@@ -370,6 +408,43 @@ async function api(req, res, pathname) {
   }
 
   return send(res, 404, { error: 'Unknown API route' });
+}
+
+// ------------------------------------------------------------------ self-update (only for copies set up by install.sh)
+
+function newer(a, b) {
+  const pa = String(a || '0').split('.').map(Number);
+  const pb = String(b || '0').split('.').map(Number);
+  for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
+  return false;
+}
+
+async function installUpdate() {
+  const run = promisify(execFile);
+  // Unpack next to the app folder so the final rename stays on the same disk.
+  const tmp = fs.mkdtempSync(path.join(path.dirname(ROOT), '.jarvis-update-'));
+  try {
+    const r = await fetch(REPO_ZIP);
+    if (!r.ok) throw new Error(`download returned ${r.status}`);
+    fs.writeFileSync(path.join(tmp, 'jarvis.zip'), Buffer.from(await r.arrayBuffer()));
+    await run('ditto', ['-x', '-k', path.join(tmp, 'jarvis.zip'), path.join(tmp, 'unzipped')]);
+    const [dir] = fs.readdirSync(path.join(tmp, 'unzipped'));
+    const src = path.join(tmp, 'unzipped', dir);
+    if (!fs.existsSync(path.join(src, 'server.js'))) throw new Error('download was incomplete');
+    // Swap folders. Data lives elsewhere (JARVIS_DATA_DIR), so it is never touched.
+    const old = `${ROOT}.old`;
+    fs.rmSync(old, { recursive: true, force: true });
+    fs.renameSync(ROOT, old);
+    try {
+      fs.renameSync(src, ROOT);
+    } catch (err) {
+      fs.renameSync(old, ROOT); // put it back
+      throw err;
+    }
+    fs.rmSync(old, { recursive: true, force: true });
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 // ------------------------------------------------------------------ Google Calendar (read-only, via the same Apps Script)

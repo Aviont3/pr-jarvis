@@ -1,113 +1,94 @@
-# Jarvis: PR Daily Work Tracker
+# 🌸 Jarvis: your PR workday assistant
 
-A personal, voice-driven assistant for tracking your PR workday. It runs on your Mac, and your data stays on your Mac.
+Jarvis keeps track of everything you do in your workday. Talk to it (or type), and it logs your work, times tasks, keeps your to-do list, shows your meetings, and writes your weekly report for you.
 
-Talk to it (or type), and Jarvis logs your work, runs timers, keeps your to-do list, briefs you in the morning, wraps up your day and writes your reports. It can also copy everything to your **PR Daily Work Tracker** Google Sheet.
-
-No AI service, no account and no monthly cost. Jarvis understands a set of everyday phrases (listed below).
+It runs on your Mac, and your work stays on your Mac. If you want, it can also copy everything into your Google Sheet.
 
 ---
 
-## 1. One-time setup (about 5 minutes)
+## Install (one time, about 2 minutes)
 
-1. **Install Node.js.** Go to <https://nodejs.org>, download the **LTS** installer for macOS and run it.
-2. **Get the code.** Open **Terminal** (⌘+Space, type "Terminal") and paste:
+1. Open **Terminal**: press **⌘ Command + Space**, type **Terminal**, and press **Return**.
+2. Copy this whole line, paste it into Terminal, and press **Return**:
    ```bash
-   git clone https://github.com/Aviont3/pr-jarvis.git ~/pr-jarvis
+   curl -fsSL https://raw.githubusercontent.com/Aviont3/pr-jarvis/main/install.sh | bash
    ```
-   (If your Mac asks to install developer tools, click **Install**, wait, then run the command again.)
-   Or, on GitHub, click **Code → Download ZIP** and unzip it into your home folder.
-3. **Start Jarvis.** In Finder, open the `pr-jarvis` folder and **double-click `start.command`**.
-   - The first time, macOS may say it can't verify the file: **right-click → Open → Open**.
-   - Or, in Terminal: `cd ~/pr-jarvis && npm start`
-4. Jarvis opens at **http://localhost:4747**. Use **Google Chrome** for the best voice support. When Chrome asks for microphone access, click **Allow**.
-5. Go to **Settings**: add your name and your projects/clients (one per line), then click **Save**.
+3. Wait for **✅ All done!** Jarvis opens in your browser by itself. You can close Terminal.
 
-Leave the Terminal window open while you use Jarvis. Close it (or press Ctrl+C) to stop.
+That's it. The installer doesn't need your password and doesn't change anything else on your Mac.
 
-> Tip: drag `start.command` to your Dock, or add it under System Settings → General → Login Items, so Jarvis starts when you log in.
+**From now on:** double-click **🌸 Jarvis** on your Desktop, or find it in **Launchpad**. Jarvis also starts by itself when you turn on your Mac.
 
-## 2. Connect your Google Sheet (optional, about 3 minutes)
+> 💡 Talking to Jarvis works best in **Google Chrome**. When Chrome asks to use your microphone, click **Allow**.
 
-1. In Jarvis go to **Settings → Google Sheet sync** and click **Copy script**.
-2. Open your PR Daily Work Tracker sheet → **Extensions → Apps Script**. Delete what's there, paste, then click 💾 Save.
-3. Click **Deploy → New deployment**. Click the ⚙️ next to "Select type", choose **Web app**, set **Execute as: Me** and **Who has access: Anyone**, then click **Deploy**. Approve the permissions. (Google warns that the app is unverified because it's your own script: click *Advanced → Go to …*.)
-4. Copy the **Web app URL**, paste it into Jarvis, click **Save settings**, then **Test connection**.
+## First time you open it
 
-From then on, every entry and to-do is copied to the sheet:
-- **Daily Log:** the same columns as your sheet, plus a hidden "Jarvis ID" column so edits update the right row
-- **To-Do:** a new tab with status, due date and priority
-- **Lists:** your projects and categories, kept up to date
+A short welcome guide asks for your name and your projects, and tests your microphone. Then you can take a quick tour. You can replay the tour anytime with **❓ Help** at the top right.
 
-The sheet link only works with the secret token built into your copy of the script, so nobody else can write to your sheet with it.
+## Connect your Google Sheet & Calendar (optional, about 3 minutes)
 
-### Google Calendar meetings 📅
-Jarvis reads your meetings through the same script, so set up the sheet sync first.
+Click **Connect Google** at the top right (or **⚙️ Settings → Connect Google**). Jarvis walks you through it one step at a time and checks that everything works at the end. Afterwards:
+- 📗 Everything you log is saved in your Google Sheet automatically.
+- 📅 Today's meetings show on Home. When a meeting ends, Jarvis asks whether to log it.
 
-1. **Settings → Copy script**, then paste it into Apps Script again, replacing the old code. Click 💾 Save.
-2. **Deploy → Manage deployments → ✏️ Edit → Version: New version → Deploy.** Approve the calendar permission. Your web app URL stays the same.
-3. In Jarvis **Settings → Google Calendar**, tick **Show my Google Calendar meetings**, click **Save**, then **Test calendar**.
+## Using Jarvis
 
-What you get:
-- **📅 Meetings today** panel on the Today screen, with a one-click **Log** button for each meeting. The duration is filled in, the project is guessed from the meeting title, and the category is guessed too (Client Communication when a client's name is in the title).
-- **When a meeting ends**, Jarvis asks whether to log it. Say "yes".
-- Meetings appear in the **morning brief**, and the **wrap-up** points out meetings you haven't logged.
-- Declined meetings and all-day events are skipped. Each meeting can only be logged once.
-- Jarvis only *reads* your calendar and never changes it. Your main calendar is used unless you tick **Include all my calendars**.
+**Home** has four big buttons: **🎤 Talk to Jarvis · 📝 Log work · ⏱️ Start a timer · ✅ Add a to-do**.
 
-## 3. Talking to Jarvis
+Or tap the flower 🌼 and just talk, in your own words:
 
-Click the glowing mic, or press **⌘J**, and speak. You can also type in the box.
-
-| You say | Jarvis does |
+| Say something like… | Jarvis… |
 |---|---|
-| "Log 45 minutes on Spring Launch: pitched TechCrunch and Axios, waiting on replies" | Fills in project, time, category (Media Relations) and next step, then asks you to confirm |
-| "Spent 2 hours drafting the Acme press release. Next step: send to client" | Logs it, and adds "Send to client" to your to-dos |
-| "Pitched the Nike story to Vogue" | Asks "How long did that take?" Answer "30 minutes" |
-| "Start working on Acme press release" / "Stop" | Times the task and logs it when you stop |
-| "What am I working on?" / "Cancel timer" | Timer status / discard |
-| "Add to-do: follow up with Axios Friday" | Adds a to-do due Friday |
-| "Remind me to send the Nike recap tomorrow, urgent" | High-priority to-do due tomorrow |
-| "What's on my list?" | Reads your overdue, today and upcoming to-dos |
-| "Check off follow up with Axios" | Completes it and offers to log time for it |
-| "How many hours on Acme this month?" | Answers, with a breakdown |
-| "What did I do yesterday?" / "…last week on Nike?" | Lists your entries |
-| "Weekly report" / "Report for Nike last week" | A copy-ready report for your manager or client |
-| "What meetings do I have today?" / "…tomorrow?" | Reads your calendar |
-| "When's my next meeting?" | Next meeting and how soon it starts |
-| "Log my meetings" | Logs every finished meeting you haven't logged today |
-| "Log the Acme check-in meeting" | Logs that one meeting (asks you to confirm) |
-| "Morning brief" / "Wrap up my day" | Your daily kickoff and end-of-day summary |
-| "Help" | Shows all commands |
+| “I spent 45 minutes pitching TechCrunch for Spring Launch” | logs it (and asks you to confirm) |
+| “Drafted the Acme press release. Next step: send to client” | asks how long, logs it, and adds the next step to your to-dos |
+| “Start working on the Nike media list” … “Stop” | times it and logs it |
+| “Remind me to call the venue Friday, urgent” | adds an urgent to-do due Friday |
+| “What's on my list?” | reads your to-dos |
+| “What meetings do I have today?” / “Log my meetings” | reads or logs your calendar |
+| “How many hours on Acme this month?” | tells you |
+| “Weekly report” | writes a report you can copy into an email |
+| “Good morning” / “Wrap up my day” | your daily plan / end-of-day summary |
 
-Jarvis picks the **category** from keywords (e.g. *pitch* → Media Relations & Pitching, *draft* → Press Releases & Writing). You can edit the keywords in **Settings**. Project names match on a distinctive word, so "Acme" finds "Acme Corp Rebrand".
+**The other pages:**
+- **📒 My Work:** everything you've logged. Click any row to change it. **⬇️ Download** opens it in Excel or Numbers.
+- **✅ To-Dos:** your full list. Tick the circle when something's done.
+- **📊 Insights:** charts of your time and a ready-to-send report.
+- **⚙️ Settings:** your name, projects, Google connection and voice. Changes save automatically.
 
-### Daily rhythm
-- **Morning brief:** shown automatically the first time you open Jarvis each day
-- **Check-ins:** optional; Jarvis asks "What have you been working on?" if nothing has been logged for a while (set in Settings). It stays quiet while you're in a meeting.
-- **End-of-day wrap-up:** offered automatically at the end of your workday
+## Updates
 
-## 4. Screens
-- **Today:** the Jarvis chat, the timer, today's meetings, entries and to-dos
-- **Log:** every entry, with filters, search, editing and CSV export
-- **To-Do:** overdue / today / upcoming / no date, plus completed items
-- **Dashboard:** hours today, this week and this month; charts by day, category and project; the report builder
-- **Settings:** projects, categories and keywords, voice, reminders, Sheet sync and backups
+When there's a new version, a small banner appears at the top. Click **Update now** and Jarvis updates itself in a few seconds. Your work is never touched. You can also check in **⚙️ Settings → Updates**.
 
 ## Your data
-- Stored in `pr-jarvis/data/db.json`, with daily backups in `data/backups/` (the last 30 are kept)
-- **Settings → Download a backup** saves everything as one file
-- Jarvis only accepts connections from your own Mac
 
-## For developers
+- Saved on your Mac in `~/Library/Application Support/Jarvis/data`, with a daily backup.
+- **⚙️ Settings → Save a backup copy** downloads everything as one file.
+- Only your own Mac can open Jarvis.
+
+## Uninstall
+
+Paste this into Terminal (your saved work is kept):
 ```bash
-npm start    # run the server on http://localhost:4747
-npm test     # unit tests for the command parser and Jarvis logic
+curl -fsSL https://raw.githubusercontent.com/Aviont3/pr-jarvis/main/uninstall.sh | bash
 ```
-No dependencies. The code is plain Node.js and browser JavaScript.
-- `server.js`: local API, JSON storage and the Google Sheets sync queue
+
+---
+
+<details>
+<summary>For developers</summary>
+
+```bash
+npm start    # run on http://localhost:4747 (data in ./data)
+npm test     # unit tests
+```
+No dependencies; plain Node.js and browser JavaScript.
+- `install.sh` / `uninstall.sh`: Mac installer (private Node.js, a LaunchAgent so Jarvis runs at login, an AppleScript app launcher)
+- `server.js`: local API, JSON storage, Google Sheets sync queue, calendar proxy, self-update
 - `public/js/parser.js`: rule-based command understanding
-- `public/js/jarvis.js`: conversation flow and follow-up questions
-- `public/js/insights.js`: stats, briefs, wrap-ups and reports
-- `public/js/voice.js`: speech recognition and speech output
-- `apps-script/Code.gs`: the Google Sheet side of the sync
+- `public/js/jarvis.js`: conversation flow
+- `public/js/insights.js`: stats, briefs, reports, meetings
+- `public/js/app.js`: the UI, welcome and Google guides, tour
+- `apps-script/Code.gs`: the Google side (Sheet sync and read-only Calendar)
+
+Manual setup without the installer: install Node.js 18+, `git clone` this repo, run `npm start`, and open http://localhost:4747. (`start.command` does this with a double-click.)
+</details>
