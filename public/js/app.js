@@ -347,13 +347,77 @@ const fullWhen = (iso) => new Date(iso).toLocaleString([], { weekday: 'short', m
 const stamp = (label, iso, cls = '') => (iso ? `<span class="stamp ${cls}" title="${label} ${fullWhen(iso)}">${label} ${whenLabel(iso)}</span>` : '');
 
 function todoLi(td) {
-  const meta = [dueMeta(td), td.project && h(displayProject(td.project)), td.priority === 'high' && 'High priority'].filter(Boolean).join(' · ');
+  // Open to-dos: the due date is a button that opens the date picker.
+  const due = td.done ? dueMeta(td)
+    : `<button type="button" class="due-btn ${td.due ? '' : 'empty'}" data-due-edit="${td.id}" title="Change the due date">📅 ${td.due ? dueMeta(td) : 'Add due date'}</button>`;
+  const meta = [due, td.project && h(displayProject(td.project)), td.priority === 'high' && 'High priority'].filter(Boolean).join(' · ');
   const dates = [stamp('Added', td.createdAt), td.done && stamp('Completed', td.doneAt, 'done-stamp')].filter(Boolean).join(' · ');
   return `<li class="${td.done ? 'done' : ''} ${td.priority === 'high' ? 'high' : ''}" data-todo="${td.id}">
     <input type="checkbox" ${td.done ? 'checked' : ''} aria-label="Done">
     <div class="t"><span contenteditable="plaintext-only" spellcheck="false">${h(td.text)}</span>${meta ? `<div class="meta">${meta}</div>` : ''}${dates ? `<div class="meta dates">${dates}</div>` : ''}</div>
     <button class="x" title="Delete">✕</button></li>`;
 }
+
+// ---- Due date picker (one small pop-up shared by all to-dos)
+
+const duePop = Object.assign(document.createElement('div'), { className: 'due-pop', hidden: true });
+document.body.append(duePop);
+let duePopFor = null;
+
+function nextWeekday(target) { // 0=Sun … 6=Sat, always in the future
+  const d = new Date();
+  const diff = ((target - d.getDay() + 7) % 7) || 7;
+  return isoDate(addDays(d, diff));
+}
+
+function openDuePicker(btn, td) {
+  duePopFor = td.id;
+  const today = new Date();
+  const choices = [
+    ['Today', isoDate(today)], ['Tomorrow', isoDate(addDays(today, 1))],
+    ['Friday', nextWeekday(5)], ['Next Monday', nextWeekday(1)], ['In a week', isoDate(addDays(today, 7))],
+  ].filter(([, d], i, all) => all.findIndex(([, x]) => x === d) === i); // no duplicate dates
+  duePop.innerHTML = `
+    <div class="due-pop-title">📅 When is it due?</div>
+    <div class="due-pop-chips">${choices.map(([l, d]) => `<button type="button" data-set-due="${d}" class="${td.due === d ? 'on' : ''}">${l}<small>${fmtDate(d)}</small></button>`).join('')}</div>
+    <label class="due-pop-pick">Or pick a date <input type="date" id="due-pop-date" value="${td.due || ''}"></label>
+    <div class="due-pop-foot">${td.due ? '<button type="button" class="link" data-set-due="">✕ No due date</button>' : '<span></span>'}<button type="button" class="link" id="due-pop-close">Close</button></div>`;
+  duePop.hidden = false;
+  const r = btn.getBoundingClientRect();
+  const w = duePop.offsetWidth;
+  const h2 = duePop.offsetHeight;
+  duePop.style.left = `${Math.min(window.innerWidth - w - 12, Math.max(12, r.left))}px`;
+  duePop.style.top = `${r.bottom + 8 + h2 < window.innerHeight ? r.bottom + 6 : Math.max(12, r.top - h2 - 6)}px`;
+}
+function closeDuePicker() { duePop.hidden = true; duePopFor = null; }
+
+async function setDue(id, due) {
+  const td = state.todos.find((x) => x.id === id);
+  closeDuePicker();
+  await actions.updateTodo(id, { due });
+  toast(due ? `📅 “${shorten(td?.text, 30)}” is now due ${fmtDate(due)}` : `📅 Removed the due date from “${shorten(td?.text, 30)}”`);
+}
+
+duePop.addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-set-due]');
+  if (b && duePopFor) setDue(duePopFor, b.dataset.setDue);
+  if (ev.target.id === 'due-pop-close') closeDuePicker();
+});
+duePop.addEventListener('change', (ev) => {
+  if (ev.target.id === 'due-pop-date' && ev.target.value && duePopFor) setDue(duePopFor, ev.target.value);
+});
+document.addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-due-edit]');
+  if (b) {
+    ev.stopPropagation();
+    const td = state.todos.find((x) => x.id === b.dataset.dueEdit);
+    if (duePopFor === td?.id) closeDuePicker(); else if (td) openDuePicker(b, td);
+    return;
+  }
+  if (!duePop.hidden && !duePop.contains(ev.target)) closeDuePicker();
+}, true);
+document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && !duePop.hidden) closeDuePicker(); });
+window.addEventListener('scroll', () => { if (!duePop.hidden) closeDuePicker(); }, { passive: true });
 
 function deletedTodoLi(td) {
   const dates = [stamp('Added', td.createdAt), td.doneAt && stamp('Completed', td.doneAt, 'done-stamp'), stamp('Deleted', td.deletedAt, 'del-stamp')].filter(Boolean).join(' · ');

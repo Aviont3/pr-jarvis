@@ -18,7 +18,7 @@ export const HELP = {
     ] },
     { heading: 'Fix mistakes', items: ['"Change that to 45 minutes"', '"Change that to Nike Holiday"', '"Edit my last entry"', '"Delete my last entry" / "Undo that"'] },
     { heading: 'Timer', items: ['"Start working on Acme press release"', '"Stop" / "Done"', '"What am I working on?"', '"Cancel timer"'] },
-    { heading: 'To-dos', items: ['"Add to-do: follow up with Axios Friday"', '"Remind me to send the recap tomorrow, urgent"', '"What\'s on my list?"', '"Check off follow up with Axios"'] },
+    { heading: 'To-dos', items: ['"Add to-do: follow up with Axios Friday"', '"Remind me to send the recap tomorrow, urgent"', '"What\'s on my list?"', '"Check off follow up with Axios"', '"Move follow up with Axios to Friday"'] },
     { heading: 'Questions & reports', items: ['"How many hours on Acme this month?"', '"What did I do yesterday?"', '"What did I do on October 19th?"', '"Weekly report" / "Report for Nike last week"'] },
     { heading: 'Calendar', items: ['"What meetings do I have today?"', '"When\'s my next meeting?"', '"Log my meetings"', '"Log the Acme check-in meeting"'] },
     { heading: 'Daily rhythm', items: ['"Morning brief"', '"Wrap up my day"'] },
@@ -277,6 +277,15 @@ export class Jarvis {
         const td = await this.actions.addTodo({ text: cmd.todo, due: cmd.due, priority: cmd.priority, project: cmd.project });
         const due = td.due ? `, due ${td.due === isoDate(now) ? 'today' : fmtDate(td.due)}` : '';
         return say(`Added to your list: ${td.text}${due}${td.priority === 'high' ? ', marked urgent' : ''}.`);
+      }
+
+      case 'todo_due': {
+        const td = findTodo(state.todos, cmd.query);
+        if (!td) return say(`I couldn't find an open to-do matching "${cmd.query}". Say "what's on my list" to hear them.`);
+        await this.actions.updateTodo(td.id, { due: cmd.due });
+        if (!cmd.due) return say(`Removed the due date from "${td.text}".`);
+        const when = cmd.due === isoDate(now) ? 'today' : fmtDate(cmd.due);
+        return say(`Done. "${td.text}" is now due ${when}.`);
       }
 
       case 'todo_complete': {

@@ -463,3 +463,19 @@ a.btn.primary { color: #fff; }
 .todo-list li.deleted .t > span:first-child { color: var(--text-muted); text-decoration: line-through; text-decoration-color: var(--danger); }
 .del-icon { font-size: 16px; opacity: .7; }
 .deleted-wrap summary::before { content: "" !important; }
+
+/* ---------------------------------------------------------------- due date picker */
+.due-btn { border: 1px dashed transparent; background: none; padding: 0 4px; margin-left: -4px; border-radius: 8px; cursor: pointer; font: inherit; color: inherit; }
+.due-btn:hover { border-color: var(--pink); background: #fff; color: var(--text-primary); }
+.due-btn.empty { color: var(--text-muted); opacity: .75; }
+.todo-list li:hover .due-btn.empty { opacity: 1; }
+.due-pop { position: fixed; z-index: 120; width: 300px; background: #fff; border: 1px solid var(--border); border-radius: 18px; box-shadow: 0 18px 40px rgba(58, 44, 53, .2); padding: 14px; animation: pop .2s ease; }
+.due-pop-title { font-weight: 800; margin-bottom: 8px; }
+.due-pop-chips { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.due-pop-chips button { border: 1.5px solid var(--border); background: #fff; border-radius: 12px; padding: 6px 10px; cursor: pointer; font-weight: 700; font-size: 13px; text-align: left; display: flex; flex-direction: column; }
+.due-pop-chips button small { color: var(--text-muted); font-weight: 500; font-size: 11px; }
+.due-pop-chips button:hover { border-color: var(--pink); }
+.due-pop-chips button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.due-pop-chips button.on small { color: #eafff1; }
+.due-pop-pick { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; font-size: 12px; font-weight: 700; color: var(--text-muted); }
+.due-pop-foot { display: flex; justify-content: space-between; margin-top: 10px; }

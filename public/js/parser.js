@@ -378,6 +378,20 @@ export function parseCommand(input, ctx = {}) {
     return out('todo_complete', { query: tidy(q) });
   }
 
+  // Changing a to-do's due date:
+  //   "move follow up with Axios to Friday", "push the venue to next week",
+  //   "change the due date of the media list to 11/20", "remove the due date from the venue"
+  const noDue = text.match(/^(?:remove|clear|delete|take off)\s+(?:the\s+)?due\s+date\s+(?:from|for|on|of)\s+(?:the\s+)?(?:to-?do\s+)?(.+)$/i);
+  if (noDue) return out('todo_due', { query: tidy(noDue[1]), due: '' });
+  const moveM =
+    text.match(/^(?:change|set|update|move)\s+(?:the\s+)?due\s+date\s+(?:of|for|on)\s+(?:the\s+)?(?:to-?do\s+)?(.+?)\s+to\s+(.+)$/i) ||
+    text.match(/^(?:move|push|reschedule|bump|shift|postpone)\s+(?:the\s+)?(?:to-?do\s+)?(.+?)\s+(?:to|until|till|for)\s+(.+)$/i) ||
+    text.match(/^make\s+(?:the\s+)?(?:to-?do\s+)?(.+?)\s+due\s+(.+)$/i);
+  if (moveM) {
+    const due = parseDue(moveM[2], now);
+    if (due) return out('todo_due', { query: tidy(moveM[1]), due: due.due });
+  }
+
   const todoM =
     text.match(/^(?:add|create|new|put|make)?\s*(?:a\s+)?(?:to-?\s?do|todo|task|reminder)(?:\s+to my list)?\s*(?:[:,\-]|\s+to\s+|\s+)\s*(.+)$/i) ||
     text.match(/^remind me (?:to\s+)?(.+)$/i) ||

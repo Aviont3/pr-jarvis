@@ -54,7 +54,7 @@ Or tap the flower 🌼 and just talk, in your own words:
 
 **The other pages:**
 - **📒 My Work:** everything you've logged. Click ✏️ to change or 🗑️ to delete any entry, from any day (a deleted entry can be brought back with **Undo**). To see one day, choose **Show → 📅 A specific day…** and pick a date (◀ ▶ step a day at a time), or click any date in the list. **📋 Copy summary** copies that day's work, and **⬇️ Download** opens it in Excel or Numbers.
-- **✅ To-Dos:** your full list. Tick the circle when something's done. Each to-do shows when it was **added**, and finished ones when they were **completed**. Deleted to-dos go to **🗑️ Deleted** with their **deletion date**, and you can **Restore** them. The same dates appear in the Google Sheet's To-Do tab.
+- **✅ To-Dos:** your full list. Tick the circle when something's done. Click a to-do's **📅 date** to change when it's due (or say “move … to Friday”). Each to-do shows when it was **added**, and finished ones when they were **completed**. Deleted to-dos go to **🗑️ Deleted** with their **deletion date**, and you can **Restore** them. The same dates appear in the Google Sheet's To-Do tab.
 - **📊 Insights:** charts of your time and a ready-to-send report.
 - **⚙️ Settings:** your name, projects, Google connection and voice. Changes save automatically.
 
