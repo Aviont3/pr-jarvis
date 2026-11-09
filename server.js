@@ -215,6 +215,10 @@ async function callSheet(payload) {
   const text = await res.text();
   let json;
   try { json = JSON.parse(text); } catch {
+    // Common mistake: pasting the code inside Google's empty "function myFunction() { }".
+    if (/Script function not found:\s*doPost/i.test(text)) {
+      throw new Error('Google can’t find the Jarvis code. In Apps Script, select everything (⌘A), delete it so the editor is empty, paste the code again (there should be no “function myFunction() {” at the top), click Save, then deploy a new version.');
+    }
     throw new Error(res.ok
       ? 'Unexpected reply from Google. Check the web app is deployed with access set to "Anyone".'
       : `Google returned HTTP ${res.status}.`);

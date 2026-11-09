@@ -1,6 +1,6 @@
 {
   "name": "pr-jarvis",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Jarvis: a local, voice-driven daily work tracker and to-do list for PR work, with Google Sheets sync.",
   "type": "module",
   "private": true,

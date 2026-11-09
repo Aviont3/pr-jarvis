@@ -996,8 +996,9 @@ function openGoogleGuide() {
       emoji: '📋', title: 'Copy and paste the code',
       html: `<p><b>Step 1.</b> Click this button:</p>
              <p><button type="button" class="btn primary big" id="g-copy">📋 Copy the code</button> <span id="g-copied" class="ok-note"></span></p>
-             <p><b>Step 2.</b> In the Apps Script tab, click inside the code area, then press ${kbd('⌘ Cmd')} + ${kbd('A')} to select everything, then ${kbd('⌘ Cmd')} + ${kbd('V')} to paste.</p>
-             <p><b>Step 3.</b> Click the save icon ${ui('💾')} (or press ${kbd('⌘ Cmd')} + ${kbd('S')}).</p>`,
+             <p><b>Step 2.</b> In the Apps Script tab, click inside the code area and press ${kbd('⌘ Cmd')} + ${kbd('A')}, then ${kbd('Delete')}. The code area should be <b>completely empty</b>, with no <code>function myFunction() {</code> left.</p>
+             <p><b>Step 3.</b> Press ${kbd('⌘ Cmd')} + ${kbd('V')} to paste.</p>
+             <p><b>Step 4.</b> Click the save icon ${ui('💾')} (or press ${kbd('⌘ Cmd')} + ${kbd('S')}).</p>`,
       onShow: (body) => {
         $('#g-copy', body).onclick = async () => {
           const code = await (await fetch('/api/apps-script')).text();
