@@ -6,20 +6,39 @@ It runs on your Mac, and your work stays on your Mac. If you want, it can also c
 
 ---
 
-## Install (one time, about 2 minutes)
+## Download Jarvis for your Mac
 
-1. Open **Terminal**: press **⌘ Command + Space**, type **Terminal**, and press **Return**.
-2. Copy this whole line, paste it into Terminal, and press **Return**:
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/Aviont3/pr-jarvis/main/install.sh | bash
-   ```
-3. Wait for **✅ All done!** Jarvis opens in your browser by itself. You can close Terminal.
+**[⬇️ Download Jarvis for Mac](https://github.com/Aviont3/pr-jarvis/raw/main/dist/Jarvis-mac.zip)**
 
-That's it. The installer doesn't need your password and doesn't change anything else on your Mac.
+1. Open the download (it becomes **Jarvis**) and drag **Jarvis** into your **Applications** folder.
+2. Double-click **Jarvis**. The first time, it sets itself up (about a minute, needs the internet) and then opens in your browser.
+3. **If your Mac says it can't check Jarvis for malicious software** (Apple shows this for apps from outside the App Store), approve it once:
+   - Click **Done** (or **OK**), then open **System Settings → Privacy & Security**.
+   - Scroll down to *“Jarvis was blocked…”* and click **Open Anyway**, then confirm with your password or Touch ID.
+   - On older macOS versions you can instead **right-click Jarvis → Open → Open**.
 
-**From now on:** double-click **🌸 Jarvis** on your Desktop, or find it in **Launchpad**. Jarvis also starts by itself when you turn on your Mac.
+From then on, just open **Jarvis** from Applications, Launchpad or the Dock (right-click its Dock icon → Options → **Keep in Dock**). Jarvis also starts by itself whenever you log in, so it's always ready.
 
 > 💡 Talking to Jarvis works best in **Google Chrome**. When Chrome asks to use your microphone, click **Allow**.
+
+<details>
+<summary>Prefer Terminal? One-line install instead</summary>
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Aviont3/pr-jarvis/main/install.sh | bash
+```
+This does the same setup, and also puts a Jarvis icon on your Desktop.
+</details>
+
+## Use Jarvis on your iPhone or Android
+
+Your phone uses Jarvis **on your Mac** over your Wi-Fi, so all your data stays on your Mac.
+
+1. On the Mac: **⚙️ Settings → 📱 Use Jarvis on your phone → Let my phone connect**. A QR code appears.
+2. On the phone: open the **Camera**, point it at the code, and tap the link. (Or type the address and 6-digit code shown on the Mac.)
+3. Add it to your home screen: on **iPhone** (Safari) tap **Share → Add to Home Screen**; on **Android** (Chrome) tap **⋮ → Add to Home screen**.
+
+The phone works when it's on the **same Wi-Fi as the Mac and the Mac is awake**. To talk to Jarvis on your phone, tap the text box and use the keyboard's 🎤. Settings, backups and connections are managed on the Mac. Each phone is paired with a one-time code, and other people on the same Wi-Fi can't open your Jarvis. **Settings → Connected phones → Disconnect** removes a phone.
 
 ## First time you open it
 
@@ -109,6 +128,8 @@ When there's a new version, a small banner appears at the top. Click **Update no
 
 ## Your data: saving & backups
 
+Jarvis is built for everyday, long-term use. Your work is kept on your Mac **for good**: it stays when you restart, when Jarvis updates, and even if you delete and re-download the app (the data folder is separate from the app).
+
 - **Saved instantly:** everything you log is saved on your Mac the moment you save it (in `~/Library/Application Support/Jarvis/data`).
 - **Automatic backups:** a backup copy is made shortly after every change, and Jarvis checks every 5 minutes.
 - **Google Drive backups:** if Google is connected, each backup also goes to a **“Jarvis Backups”** folder in your Google Drive (one file per day, the last 30 days are kept). If you connected Google before this feature existed, Jarvis shows **“One quick step to turn on Google Drive backups”** and walks you through updating the script (about a minute).
@@ -134,6 +155,8 @@ npm test     # unit tests
 No dependencies; plain Node.js and browser JavaScript.
 - `install.sh` / `uninstall.sh`: Mac installer (private Node.js, a LaunchAgent so Jarvis runs at login, an AppleScript app launcher)
 - `server.js`: local API, JSON storage, Google Sheets sync queue, calendar proxy, self-update
+- `phone.js`: phone access over Wi-Fi (pairing codes, paired-device check)
+- `packaging/`: builds the downloadable Mac app (`packaging/build-mac-app.sh` → `dist/Jarvis-mac.zip`)
 - `slack.js`: posting to Slack through an Incoming Webhook
 - `coverage.js`: news coverage search (Google News RSS), parsing and relevance filtering
 - `public/js/projects.js`: the Projects page (overview, work, to-dos, agenda, coverage)

@@ -3,6 +3,7 @@ import { Voice } from './voice.js';
 import { parseCommand, guessCategory, shortTask } from './parser.js';
 import { HELP } from './jarvis.js';
 import { initProjects } from './projects.js';
+import qrcode from '../vendor/qrcode.mjs';
 import {
   stats, todoBuckets, sortTodos, buildReport, toCsv, displayProject, filterEntries, morningBrief, wrapUp,
   meetingsOn, isMeetingLogged, meetingToEntry, unloggedMeetings, fmtTime, meetingHours,
@@ -1048,7 +1049,7 @@ function renderSettings() {
   f.msTenant.value = s.msTenant || 'organizations';
   f.keywords.value = keywordsToText(s.categories || [], s.keywords || {});
   f.defaultCategory.innerHTML = categoryOptions(s.defaultCategory);
-  for (const k of ['speakReplies', 'autoBrief', 'notesToTodos', 'autoSaveVoiceLogs', 'calendarEnabled', 'calendarAll', 'meetingPrompts', 'driveBackup', 'outlookCalendar', 'outlookFlagged', 'outlookMail', 'slackCoverageAlerts', 'slackDailyWrap', 'slackWeekly']) f[k].checked = !!s[k];
+  for (const k of ['speakReplies', 'autoBrief', 'notesToTodos', 'autoSaveVoiceLogs', 'calendarEnabled', 'calendarAll', 'meetingPrompts', 'driveBackup', 'outlookCalendar', 'outlookFlagged', 'outlookMail', 'slackCoverageAlerts', 'slackDailyWrap', 'slackWeekly', 'phoneAccess']) f[k].checked = !!s[k];
   f.meetingCategory.innerHTML = categoryOptions(s.meetingCategory).replace('<option value="">(none)</option>', '');
   f.checkInMinutes.value = String(s.checkInMinutes || 0);
   f.workStart.value = s.workStart || '09:00';
@@ -1087,6 +1088,7 @@ async function saveSettings() {
     outlookCalendar: f.outlookCalendar.checked, outlookFlagged: f.outlookFlagged.checked, outlookMail: f.outlookMail.checked,
     msClientId: f.msClientId.value.trim(), msTenant: f.msTenant.value,
     slackWebhook: f.slackWebhook.value.trim(),
+    phoneAccess: f.phoneAccess.checked,
     slackCoverageAlerts: f.slackCoverageAlerts.checked, slackDailyWrap: f.slackDailyWrap.checked, slackWeekly: f.slackWeekly.checked,
     voiceName: f.voiceName.value, checkInMinutes: Number(f.checkInMinutes.value),
     workStart: f.workStart.value, workEnd: f.workEnd.value, sheetUrl: f.sheetUrl.value.trim(),
@@ -1096,6 +1098,7 @@ async function saveSettings() {
   loadCalendar(true);
   loadInbox(true);
   renderGoogleStatus();
+  renderPhone();
   $('#settings-msg').textContent = '✓ Saved';
   clearTimeout(saveSettings.t);
   saveSettings.t = setTimeout(() => { $('#settings-msg').textContent = ''; }, 2000);
@@ -1132,7 +1135,7 @@ function show(view) {
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${view}`));
   if (view === 'log') renderLog();
   if (view === 'dashboard') renderDashboard();
-  if (view === 'settings') renderSettings();
+  if (view === 'settings') { renderSettings(); renderPhone(); }
   if (view === 'projects') projectsPage.render();
   location.hash = view;
 }
@@ -1154,7 +1157,10 @@ $('#export-csv').onclick = () => {
   a.click();
 };
 
-$('#mic-btn').onclick = () => voice.toggle();
+$('#mic-btn').onclick = () => {
+  if (!voice.supported && onPhone) { $('#ask-input').focus(); toast('Tap your keyboard’s 🎤 and talk'); return; }
+  voice.toggle();
+};
 $('#ask-form').onsubmit = (ev) => {
   ev.preventDefault();
   const inp = $('#ask-input');
@@ -1189,7 +1195,11 @@ function renderHello() {
   $('#chip-meetings').hidden = !state.calendarActive;
 }
 
-$('#qa-talk').onclick = () => { $('#jarvis-panel').scrollIntoView({ behavior: 'smooth', block: 'center' }); voice.toggle(); };
+$('#qa-talk').onclick = () => {
+  $('#jarvis-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (!voice.supported) { $('#ask-input').focus(); toast('Tap your keyboard’s 🎤 and talk'); return; }
+  voice.toggle();
+};
 $('#qa-log').onclick = () => openEntry();
 $('#qa-timer').onclick = () => {
   const inp = $('#timer-form [name=task]');
@@ -1566,6 +1576,46 @@ $('#help-tour').onclick = () => { helpDlg.close(); startTour(); };
 $('#help-google').onclick = () => { helpDlg.close(); openGoogleGuide(); };
 $('#google-connect').onclick = () => openGoogleGuide();
 $('#rerun-welcome').onclick = () => openWelcome();
+
+// ---- 📱 Phone
+
+// True when this page is being used from a paired phone (not on the Mac itself).
+const onPhone = !['localhost', '127.0.0.1'].includes(location.hostname);
+if (onPhone) document.body.classList.add('on-phone');
+
+async function renderPhone() {
+  const box = $('#phone-box');
+  if (!box || onPhone) return;
+  box.hidden = !state.settings.phoneAccess;
+  if (!state.settings.phoneAccess) return;
+  let st;
+  try { st = await (await fetch('/api/phone/status')).json(); } catch { return; }
+  const err = $('#phone-error');
+  err.hidden = !st.error && st.urls.length > 0;
+  err.textContent = st.error || (st.urls.length ? '' : 'This Mac isn’t on a Wi-Fi network right now.');
+  if (st.pairUrl) {
+    const qr = qrcode(0, 'M');
+    qr.addData(st.pairUrl);
+    qr.make();
+    $('#phone-qr').innerHTML = qr.createSvgTag({ cellSize: 5, margin: 3, scalable: true });
+  }
+  $('#phone-url').textContent = st.urls[0] ? `${st.urls[0].replace('http://', '')}/pair` : '…';
+  $('#phone-code').textContent = st.code ? `${st.code.slice(0, 3)} ${st.code.slice(3)}` : '';
+  $('#phone-expires').textContent = 'The code changes every 10 minutes and works once.';
+  $('#phone-devices').innerHTML = st.devices.length ? st.devices.map((d) => `
+    <li>📱 <b>${h(d.name)}</b> <span class="muted">connected ${new Date(d.pairedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} · last used ${new Date(d.lastSeen).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
+      <button type="button" class="link" data-remove-device="${h(d.id)}">Disconnect</button></li>`).join('')
+    : '<li class="empty">No phones connected yet.</li>';
+}
+document.addEventListener('click', async (ev) => {
+  const b = ev.target.closest('[data-remove-device]');
+  if (!b) return;
+  if (!confirm('Disconnect this phone? It will need a new code to connect again.')) return;
+  await api('POST', 'phone/remove', { id: b.dataset.removeDevice });
+  renderPhone();
+  toast('Phone disconnected');
+});
+setInterval(() => { if (!onPhone && $('#view-settings').classList.contains('active') && state.settings.phoneAccess) renderPhone(); }, 30000);
 
 // ---- Slack
 
@@ -2135,6 +2185,7 @@ function renderProjectsBadge() {
 // ------------------------------------------------------------------ boot
 
 async function boot() {
+  if (onPhone && !window.isSecureContext) voice.supported = false; // phones can't use the mic over Wi-Fi; the keyboard's 🎤 works
   startPetals();
   await api('GET', 'state');
   show((location.hash || '#today').slice(1) || 'today');
@@ -2158,7 +2209,13 @@ async function boot() {
   setInterval(() => { if ($('#view-settings').classList.contains('active')) api('GET', 'state'); }, 30000);
   checkForUpdates();
   setInterval(() => checkForUpdates(), 6 * 3600 * 1000);
-  if (!voice.supported) jarvisSay({ speech: 'Talking to me works in Google Chrome. Here you can type instead, and everything else works the same.' }, false);
+  if (onPhone && new URLSearchParams(location.search).get('paired')) {
+    history.replaceState(null, '', '/');
+    toast('📱 Connected! Now add Jarvis to your Home Screen');
+    jarvisSay({ speech: 'Your phone is connected to Jarvis on your Mac. 🌸 To get an app icon: on iPhone tap Share, then Add to Home Screen; on Android tap ⋮, then Add to Home screen.' }, false);
+  } else if (onPhone) {
+    // nothing extra
+  } else if (!voice.supported) jarvisSay({ speech: 'Talking to me works in Google Chrome. Here you can type instead, and everything else works the same.' }, false);
 }
 
 boot().catch(() => {

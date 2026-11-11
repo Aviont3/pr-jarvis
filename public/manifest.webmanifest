@@ -1,0 +1,9 @@
+{
+  "name": "Jarvis · PR Work Tracker",
+  "short_name": "Jarvis",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fffaf2",
+  "theme_color": "#fde3ee",
+  "icons": [{ "src": "/icon.png", "sizes": "1024x1024", "type": "image/png", "purpose": "any" }]
+}

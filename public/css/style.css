@@ -597,3 +597,52 @@ a.btn.primary { color: #fff; }
 @media (max-width: 1000px) { .proj-grid, .agenda-grid, .coverage-grid { grid-template-columns: 1fr; } .proj-client { margin-left: 0; } }
 .proj-slack { display: block; margin-top: 12px; font-size: 13px; font-weight: 700; color: var(--text-secondary); }
 .proj-slack input { display: block; width: 100%; margin-top: 4px; font-weight: 400; }
+
+/* ---------------------------------------------------------------- 📱 phone pairing (Settings on the Mac) */
+.phone-pair { display: grid; grid-template-columns: 190px 1fr; gap: 18px; align-items: start; margin: 12px 0; }
+.qr { background: #fff; border: 1px solid var(--border); border-radius: 16px; padding: 8px; }
+.qr svg { width: 100%; height: auto; display: block; }
+.pair-code { font-size: 34px; font-weight: 800; letter-spacing: .12em; color: var(--accent-strong); font-variant-numeric: tabular-nums; }
+.device-list { list-style: none; padding: 0; margin: 0; }
+.device-list li { padding: 6px 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+.phone-panel .bad { color: var(--danger); font-weight: 600; }
+
+/* ---------------------------------------------------------------- 📱 phone layout */
+.on-phone #settings-btn, .on-phone #update-banner, .on-phone .petals { display: none !important; }
+.on-phone .sync-pill { pointer-events: none; }
+@media (max-width: 640px) {
+  :root { font-size: 16px; }
+  .topbar { flex-wrap: wrap; gap: 8px; padding: 10px 12px calc(10px); padding-top: max(10px, env(safe-area-inset-top)); }
+  .brand { flex: 1; }
+  .brand-name { font-size: 18px; }
+  .top-right { margin-left: 0; }
+  .top-right .icon-btn span, .top-right .sync-pill { display: none; }
+  .tabs { order: 3; width: 100%; margin: 0; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs button { flex: none; padding: 8px 12px; }
+  main { padding: 14px 12px 80px; }
+  .hello h1, .page-title h1, .proj-title h1 { font-size: 22px; }
+  .quick-actions { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .qa { padding: 14px; }
+  .qa small { display: none; }
+  .today-grid, .proj-grid, .dash-grid, .settings, .agenda-grid, .coverage-grid { grid-template-columns: 1fr; gap: 14px; }
+  .jarvis-panel { min-height: 0; position: static; }
+  .chat { max-height: 50vh; min-height: 160px; }
+  .mic { width: 60px; height: 60px; }
+  .ask input { font-size: 16px; } /* stops iPhone zooming in */
+  input, select, textarea { font-size: 16px; }
+  .stat-row { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .toolbar, .todo-add-form, .filters { flex-direction: column; align-items: stretch; }
+  .toolbar-actions { margin-left: 0; flex-wrap: wrap; }
+  .todo-add-form #todo-text { min-width: 0; }
+  .log-table { font-size: 13px; }
+  .log-table th:nth-child(4), .log-table td:nth-child(4), .log-table th:nth-child(6), .log-table td:nth-child(6) { display: none; }
+  .ra { opacity: 1; width: 36px; height: 34px; }
+  .todo-list .x { visibility: visible; }
+  .proj-client { width: 100%; }
+  .proj-client input { min-width: 0; flex: 1; }
+  .phone-pair { grid-template-columns: 1fr; }
+  dialog { padding: 18px; }
+  .due-pop { width: calc(100vw - 24px) !important; left: 12px !important; }
+  .toast { width: calc(100vw - 24px); bottom: max(16px, env(safe-area-inset-bottom)); }
+}

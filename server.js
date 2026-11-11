@@ -13,6 +13,7 @@ import {
   emptyOutlook, outlookStatus, loginUrl, finishLogin, explainMsError, getOutlookEvents, getFlagged, flagStatus, getInbox, graph,
 } from './outlook.js';
 import { scanNews } from './coverage.js';
+import { PHONE_PORT, pairingCode, lanAddresses, deviceFor, tryPair, blockedForPhone, pairPage } from './phone.js';
 import { postToSlack, validWebhook, toSlackText, textBlock, esc as slackEsc } from './slack.js';
 import { wrapUp, buildReport, displayProject } from './public/js/insights.js';
 import { isoDate, roundHours, periodRange, inRange } from './public/js/util.js';
@@ -58,6 +59,7 @@ const DEFAULT_SETTINGS = () => ({
   slackCoverageAlerts: true,
   slackDailyWrap: false,
   slackWeekly: false,
+  phoneAccess: false, // let paired phones on the same Wi-Fi use Jarvis
   outlookCalendar: true,
   outlookFlagged: true,
   outlookMail: true,
@@ -79,16 +81,43 @@ function emptyDb() {
     sync: { queue: [], lastSyncAt: null, lastError: null },
     backups: { lastLocalAt: null, lastDriveAt: null, driveError: null, driveFolderUrl: null, scriptOutdated: false },
     outlook: emptyOutlook(),
+    devices: [],     // paired phones (only a hash of each phone's key)
     projectInfo: {}, // per project: client, coverage search words, agenda draft & history
     coverage: [],    // news articles found about clients
     meta: { lastBriefDate: null },
   };
 }
 
+/** Read the data file; if it's damaged, set it aside and use the newest good backup instead. */
+function readDataFile() {
+  if (!fs.existsSync(DB_FILE)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+  } catch (err) {
+    const damaged = `${DB_FILE}.damaged-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    fs.renameSync(DB_FILE, damaged);
+    console.error(`Data file was damaged (${err.message}); kept it as ${damaged}.`);
+    const candidates = fs.existsSync(BACKUP_DIR)
+      ? ['latest.json', ...fs.readdirSync(BACKUP_DIR).filter((f) => /^db-\d{4}-\d{2}-\d{2}\.json$/.test(f)).sort().reverse()]
+      : [];
+    for (const f of candidates) {
+      try {
+        const data = JSON.parse(fs.readFileSync(path.join(BACKUP_DIR, f), 'utf8'));
+        if (Array.isArray(data.entries)) {
+          console.error(`Restored your data from backups/${f}.`);
+          data.meta = { ...(data.meta || {}), restoredFrom: f, restoredAt: new Date().toISOString() };
+          return data;
+        }
+      } catch { /* try the next backup */ }
+    }
+    return null;
+  }
+}
+
 function loadDb() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
-  if (!fs.existsSync(DB_FILE)) return emptyDb();
-  const raw = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+  const raw = readDataFile();
+  if (!raw) return emptyDb();
   const base = emptyDb();
   return {
     ...base, ...raw,
@@ -382,7 +411,7 @@ async function flush() {
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.gs': 'text/plain; charset=utf-8',
+  '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.mjs': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.gs': 'text/plain; charset=utf-8',
 };
 
 function send(res, status, body, type = 'application/json') {
@@ -577,6 +606,7 @@ async function api(req, res, pathname) {
     const allowed = Object.keys(DEFAULT_SETTINGS()).filter((k) => k !== 'sheetToken');
     Object.assign(db.settings, pick(body, allowed));
     if (body.sheetUrl !== undefined) db.settings.sheetUrl = String(body.sheetUrl).trim();
+    if (body.phoneAccess !== undefined) setTimeout(applyPhoneAccess, 0);
     if (db.settings.sheetUrl && db.settings.sheetUrl !== prevUrl) enqueueEverything();
     else if (listsChanged) enqueue({ op: 'setLists' });
     scheduleFlush(200);
@@ -610,6 +640,28 @@ async function api(req, res, pathname) {
     const code = fs.readFileSync(path.join(ROOT, 'apps-script', 'Code.gs'), 'utf8')
       .replace('PASTE_TOKEN_HERE', db.settings.sheetToken);
     return send(res, 200, code, MIME['.gs']);
+  }
+
+  // 📱 phone pairing (Mac only; phones are blocked from these routes)
+  if (resource === 'phone') {
+    if (id === 'status' && m === 'GET') {
+      const p = pairingCode(url_(req).searchParams.get('new') === '1');
+      const urls = lanAddresses().map((a) => `http://${a}:${PHONE_PORT}`);
+      return send(res, 200, {
+        enabled: !!db.settings.phoneAccess,
+        listening: !!phoneServer?.listening,
+        error: phoneError,
+        code: p.code,
+        expiresAt: new Date(p.expiresAt).toISOString(),
+        urls,
+        pairUrl: urls[0] ? `${urls[0]}/pair?code=${p.code}` : null,
+        devices: (db.devices || []).map(({ id: did, name, pairedAt, lastSeen }) => ({ id: did, name, pairedAt, lastSeen })),
+      });
+    }
+    if (id === 'remove' && m === 'POST') {
+      db.devices = (db.devices || []).filter((d) => d.id !== body.id);
+      return ok();
+    }
   }
 
   if (resource === 'version' && m === 'GET') return send(res, 200, { version: VERSION, installed: INSTALLED });
@@ -1070,8 +1122,10 @@ async function outlookApi(req, res, pathname) {
   return send(res, 404, { error: 'Unknown Outlook route' });
 }
 
-const server = http.createServer(async (req, res) => {
-  const { pathname } = new URL(req.url, `http://${req.headers.host}`);
+const url_ = (req) => new URL(req.url, 'http://localhost');
+
+async function handle(req, res) {
+  const { pathname } = url_(req);
   try {
     if (pathname.startsWith('/api/calendar')) return await calendarApi(req, res);
     if (pathname.startsWith('/api/outlook/')) return await outlookApi(req, res, pathname);
@@ -1082,7 +1136,62 @@ const server = http.createServer(async (req, res) => {
     console.error(err);
     return send(res, 500, { error: String(err.message || err) });
   }
-});
+}
+const server = http.createServer(handle);
+
+// ------------------------------------------------------------------ 📱 phone listener (local network, paired phones only)
+
+let phoneServer = null;
+let phoneError = null;
+
+async function handlePhone(req, res) {
+  const { pathname, searchParams } = url_(req);
+  try {
+    if (pathname === '/pair') {
+      let code = searchParams.get('code');
+      if (req.method === 'POST') code = new URLSearchParams(await new Promise((r) => { let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => r(b)); })).get('code');
+      if (!code) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end(pairPage()); }
+      const r = tryPair(code, req);
+      if (r.error) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end(pairPage(r.error)); }
+      db.devices = [...(db.devices || []), r.device];
+      save();
+      res.writeHead(302, { 'Set-Cookie': r.cookie, Location: '/?paired=1' });
+      return res.end();
+    }
+    // the icon and app manifest are needed before pairing (home-screen icon)
+    if (['/icon.png', '/manifest.webmanifest'].includes(pathname)) return serveStatic(req, res, pathname);
+    const device = deviceFor(req, db.devices || []);
+    if (!device) {
+      if (pathname.startsWith('/api/')) return send(res, 401, { error: 'This phone isn’t connected to Jarvis yet.' });
+      res.writeHead(302, { Location: '/pair' });
+      return res.end();
+    }
+    if (Date.now() - new Date(device.lastSeen).getTime() > 60000) { device.lastSeen = new Date().toISOString(); save(); }
+    if (blockedForPhone(pathname, req.method)) return send(res, 403, { error: 'Do this in Jarvis on your Mac.' });
+    return await handle(req, res);
+  } catch (err) {
+    console.error(err);
+    return send(res, 500, { error: String(err.message || err) });
+  }
+}
+
+/** Start or stop listening on the local network to match the "phoneAccess" setting. */
+function applyPhoneAccess() {
+  const want = !!db.settings.phoneAccess;
+  if (want && !phoneServer) {
+    phoneError = null;
+    phoneServer = http.createServer(handlePhone);
+    phoneServer.on('error', (err) => {
+      phoneError = err.code === 'EADDRINUSE' ? `Port ${PHONE_PORT} is busy on this Mac.` : String(err.message || err);
+      phoneServer = null;
+    });
+    phoneServer.listen(PHONE_PORT, '0.0.0.0');
+  } else if (!want && phoneServer) {
+    phoneServer.close();
+    phoneServer.closeAllConnections?.();
+    phoneServer = null;
+  }
+}
 
 server.listen(PORT, HOST, () => {
   backup();
@@ -1097,6 +1206,7 @@ server.listen(PORT, HOST, () => {
   backupDirty = true; // one backup shortly after starting
   backupTimer = setTimeout(() => runBackup(), BACKUP_DELAY);
   if (db.sync.queue.length) scheduleFlush(2000);
+  applyPhoneAccess();
   console.log(`\n  🤖 Jarvis is running at  http://localhost:${PORT}\n  Data file: ${DB_FILE}\n  Press Ctrl+C to stop.\n`);
 });
 server.on('error', (err) => {

@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Jarvis · PR Work Tracker</title>
   <link rel="icon" href="/icon.png">
+  <link rel="apple-touch-icon" href="/icon.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Jarvis">
+  <meta name="theme-color" content="#fde3ee">
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
@@ -215,6 +221,27 @@
           <p class="muted">Jarvis listens for these names when you talk. One word is enough, so “Acme” finds “Acme Corp Rebrand”.</p>
           <div class="chip-editor" id="project-editor"></div>
           <input type="hidden" name="projects">
+        </div>
+
+        <div class="panel phone-panel">
+          <h2>📱 Use Jarvis on your phone</h2>
+          <p class="muted">Your phone connects to Jarvis on this Mac over your Wi-Fi. Your work stays on this Mac. The phone works when it's on the <b>same Wi-Fi</b> and this Mac is awake.</p>
+          <label class="check"><input type="checkbox" name="phoneAccess"> Let my phone connect</label>
+          <div id="phone-box" hidden>
+            <div class="phone-pair">
+              <div class="qr" id="phone-qr"></div>
+              <div>
+                <p><b>1.</b> Open the Camera on your phone and point it at the code.<br><b>2.</b> Tap the link that appears.</p>
+                <p class="muted">Or open <b id="phone-url"></b> on your phone and type this code:</p>
+                <div class="pair-code" id="phone-code"></div>
+                <p class="muted" id="phone-expires"></p>
+                <p><b>3.</b> On iPhone tap <b>Share → Add to Home Screen</b>; on Android tap <b>⋮ → Add to Home screen</b>. Now Jarvis is an app icon on your phone. 🌸</p>
+              </div>
+            </div>
+            <p class="bad" id="phone-error" hidden></p>
+            <h3>Connected phones</h3>
+            <ul class="device-list" id="phone-devices"></ul>
+          </div>
         </div>
 
         <div class="panel slack-panel">

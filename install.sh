@@ -100,6 +100,16 @@ OLD_PIDS="$(lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null || true)"
 sleep 1
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 
+# When the downloadable Jarvis.app runs this script, the app itself is the launcher: stop here.
+if [ "${JARVIS_FROM_APP:-}" = "1" ]; then
+  for _ in $(seq 1 30); do
+    curl -fs -o /dev/null "http://localhost:$PORT/api/state" && break
+    sleep 0.5
+  done
+  step "Jarvis is ready."
+  exit 0
+fi
+
 # ------------------------------------------------------------------ 4. The Jarvis app icon
 step "Adding the Jarvis app (4 of 4)…"
 rm -rf "$LAUNCHER"
