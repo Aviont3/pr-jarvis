@@ -4,7 +4,7 @@
 import { parseCommand, parseDuration, matchProject, guessCategory, shortTask, tidy } from './parser.js';
 import {
   morningBrief, wrapUp, answerHours, answerLog, answerTodos, buildReport, findTodo, displayProject,
-  answerMeetings, unloggedMeetings, meetingToEntry, meetingsOn, isMeetingLogged, fmtTime,
+  answerMeetings, answerEmail, unloggedMeetings, meetingToEntry, meetingsOn, isMeetingLogged, fmtTime,
 } from './insights.js';
 import { isoDate, fmtHours, roundHours, fmtDate } from './util.js';
 
@@ -20,6 +20,7 @@ export const HELP = {
     { heading: 'Timer', items: ['"Start working on Acme press release"', '"Stop" / "Done"', '"What am I working on?"', '"Cancel timer"'] },
     { heading: 'To-dos', items: ['"Add to-do: follow up with Axios Friday"', '"Remind me to send the recap tomorrow, urgent"', '"What\'s on my list?"', '"Check off follow up with Axios"', '"Move follow up with Axios to Friday"', '"Put the venue under Nike"', '"Make the venue urgent"', '"What\'s on my list for Acme?"', '"What\'s due this week?"', '"What\'s urgent?"'] },
     { heading: 'Questions & reports', items: ['"How many hours on Acme this month?"', '"What did I do yesterday?"', '"What did I do on October 19th?"', '"Weekly report" / "Report for Nike last week"'] },
+    { heading: 'Email (Outlook)', items: ['"Any new emails?"', '"Any important emails?"', '"Check my inbox"'] },
     { heading: 'Calendar', items: ['"What meetings do I have today?"', '"When\'s my next meeting?"', '"Log my meetings"', '"Log the Acme check-in meeting"'] },
     { heading: 'Daily rhythm', items: ['"Morning brief"', '"Wrap up my day"'] },
   ],
@@ -39,7 +40,7 @@ function editChanges(cmd) {
   return c;
 }
 
-const CAL_OFF = 'Google Calendar isn\'t connected yet. Turn it on in Settings under "Google Calendar".';
+const CAL_OFF = 'No calendar is connected yet. In ⚙️ Settings, connect Google or Outlook to see your meetings.';
 
 function findMeeting(events, query) {
   const q = query.toLowerCase().split(/\W+/).filter((w) => w.length > 2);
@@ -189,12 +190,18 @@ export class Jarvis {
 
       case 'brief': return morningBrief(state, now);
 
+      case 'email_check': {
+        if (!state.outlook?.connected) return say('Outlook isn’t connected yet. Go to ⚙️ Settings → Outlook and click “Sign in with Microsoft”.');
+        if (!state.inbox?.enabled) return say('Email updates are turned off. Turn on “Tell me about new emails” in ⚙️ Settings → Outlook.');
+        return answerEmail(state, cmd);
+      }
+
       case 'calendar_list':
-        if (!state.settings.calendarEnabled) return say(CAL_OFF);
+        if (!state.calendarActive && !state.settings.calendarEnabled) return say(CAL_OFF);
         return answerMeetings(state, cmd, now);
 
       case 'calendar_log': {
-        if (!state.settings.calendarEnabled) return say(CAL_OFF);
+        if (!state.calendarActive && !state.settings.calendarEnabled) return say(CAL_OFF);
         const today = meetingsOn(state.events, isoDate(now)).filter((ev) => !isMeetingLogged(ev, state.entries));
         if (cmd.query) {
           const ev = findMeeting(today, cmd.query);

@@ -31,6 +31,32 @@ Click **Connect Google** at the top right (or **⚙️ Settings → Connect Goog
 - 📗 Everything you log is saved in your Google Sheet automatically.
 - 📅 Today's meetings show on Home. When a meeting ends, Jarvis asks whether to log it.
 
+## Connect Outlook (work email & calendar)
+
+Go to **⚙️ Settings → 📧 Outlook** and click **🔑 Sign in with Microsoft**. Sign in with your work account. Afterwards:
+- 📅 **Outlook meetings** show on Home and in your morning brief, and Jarvis asks to log each one when it ends (alongside Google Calendar, if you use both).
+- 🚩 **Flagged emails become to-dos**, with the flag's due date, marked urgent if the email is important, and an **✉️ Open email** link. Un-flag or complete it in Outlook and Jarvis ticks it off.
+- 📧 **New emails** show on Home, the morning brief mentions them, and you can ask *“Any new emails?”* or *“Any important emails?”*
+
+Jarvis only **reads** your mail and calendar. It can't send, change or delete anything, and your Microsoft sign-in stays on your Mac (it's never put in backups or the Google Sheet).
+
+**Your company may need to approve Jarvis.** If so, Jarvis shows an approval link in Settings. Send it to IT; once they approve, sign in again.
+
+<details>
+<summary><b>One-time setup (for whoever installs Jarvis, about 5 minutes)</b></summary>
+
+Microsoft only lets apps sign in once they're registered. Jarvis walks you through this in **Settings → Outlook → Set up (one time)**, or:
+
+1. Open [Azure portal → App registrations](https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade) → **+ New registration**.
+2. Name: **Jarvis**. Supported account types: **Accounts in any organizational directory (Multitenant)**.
+3. Redirect URI: platform **Public client/native (mobile & desktop)**, value `http://localhost:4747/api/outlook/callback` → **Register**.
+4. **Authentication** → *Allow public client flows* → **Yes** → Save.
+5. **API permissions** → Add a permission → Microsoft Graph → **Delegated**: `Calendars.Read`, `Mail.Read`, `User.Read`, `offline_access` → Add. (An admin can click **Grant admin consent** here to approve it for the whole company.)
+6. Copy the **Application (client) ID** from the Overview page into Jarvis (the setup guide asks for it, or **Settings → Advanced → Microsoft app (client) ID**).
+
+No app secret is needed: Jarvis uses Microsoft's standard sign-in for desktop apps (authorization code with PKCE).
+</details>
+
 ## Using Jarvis
 
 **Home** has four big buttons: **🎤 Talk to Jarvis · 📝 Log work · ⏱️ Start a timer · ✅ Add a to-do**.
@@ -44,7 +70,8 @@ Or tap the flower 🌼 and just talk, in your own words:
 | “Start working on the Nike media list” … “Stop” | times it and logs it |
 | “Remind me to call the venue Friday, urgent” | adds an urgent to-do due Friday |
 | “What's on my list?” | reads your to-dos |
-| “What meetings do I have today?” / “Log my meetings” | reads or logs your calendar |
+| “What meetings do I have today?” / “Log my meetings” | reads or logs your calendar (Google and/or Outlook) |
+| “Any new emails?” / “Any important emails?” | reads your new Outlook emails |
 | “How many hours on Acme this month?” | tells you |
 | “What did I do on October 19th?” / “Pull up last Tuesday” | shows everything from that day, with a button to open it in My Work |
 | “Yesterday I spent 2 hours on the Acme release” | logs work for a past day |
@@ -89,6 +116,7 @@ npm test     # unit tests
 No dependencies; plain Node.js and browser JavaScript.
 - `install.sh` / `uninstall.sh`: Mac installer (private Node.js, a LaunchAgent so Jarvis runs at login, an AppleScript app launcher)
 - `server.js`: local API, JSON storage, Google Sheets sync queue, calendar proxy, self-update
+- `outlook.js`: Microsoft 365 sign-in (PKCE), Outlook calendar, flagged emails → to-dos, unread emails (read-only)
 - `public/js/parser.js`: rule-based command understanding
 - `public/js/jarvis.js`: conversation flow
 - `public/js/insights.js`: stats, briefs, reports, meetings

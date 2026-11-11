@@ -209,6 +209,14 @@ export function morningBrief(state, now = new Date()) {
   } else {
     speech.push('Your to-do list is clear.');
   }
+  if (state.inbox?.enabled && state.inbox.messages) {
+    const e = emailSummary(state.inbox.messages);
+    if (e.count) {
+      speech.push(e.speech);
+      sections.push({ heading: '📧 New emails', items: e.items });
+    }
+  }
+
   const todaysMeetings = meetingsOn(state.events, todayIso);
   if (todaysMeetings.length) {
     const first = todaysMeetings[0];
@@ -430,4 +438,28 @@ export function toCsv(entries) {
   const rows = [...entries].sort((a, b) => (a.date < b.date ? -1 : 1))
     .map((e) => [fmtDate(e.date, true), e.project, e.task, e.workDone, e.category, fmtNum(e.hours), e.notes].map(q).join(','));
   return [cols.map(q).join(','), ...rows].join('\n');
+}
+
+// ------------------------------------------------------------------ email (Outlook)
+
+const isImportant = (m) => m.important || m.focused;
+
+export function emailSummary(messages = [], { importantOnly = false } = {}) {
+  const list = importantOnly ? messages.filter(isImportant) : messages;
+  const important = messages.filter(isImportant);
+  const line = (m) => `${m.important ? '❗ ' : ''}${m.from || 'Someone'}: ${m.subject}`;
+  if (!list.length) {
+    return { count: 0, speech: importantOnly ? 'No important new emails. 🌼' : 'No new emails. Your inbox is calm. 🌼', items: [] };
+  }
+  const top = (important.length ? important : list).slice(0, 2).map((m) => `${m.from || 'someone'} about ${m.subject}`);
+  const speech = importantOnly
+    ? `You have ${list.length} important new ${list.length === 1 ? 'email' : 'emails'}, including ${list_(top)}.`
+    : `You have ${list.length} unread ${list.length === 1 ? 'email' : 'emails'}${important.length && important.length < list.length ? `, ${important.length} look important` : ''}. ${important.length ? 'Top of the pile' : 'Latest'}: ${list_(top)}.`;
+  return { count: list.length, speech, items: list.slice(0, 8).map(line) };
+}
+const list_ = (a) => (a.length > 1 ? `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}` : a[0] || '');
+
+export function answerEmail(state, { important = false } = {}) {
+  const e = emailSummary(state.inbox?.messages || [], { importantOnly: important });
+  return { title: important ? 'Important emails' : 'New emails', speech: e.speech, sections: e.items.length ? [{ heading: `${e.count} unread`, items: e.items }] : [] };
 }

@@ -8,7 +8,10 @@ import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_CATEGORY_KEYWORDS } from './public/js/parser.js';
+import { DEFAULT_CATEGORY_KEYWORDS, matchProject } from './public/js/parser.js';
+import {
+  emptyOutlook, outlookStatus, loginUrl, finishLogin, explainMsError, getOutlookEvents, getFlagged, flagStatus, getInbox, graph,
+} from './outlook.js';
 import { isoDate, roundHours } from './public/js/util.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -44,6 +47,12 @@ const DEFAULT_SETTINGS = () => ({
   workEnd: '18:00',
   sheetUrl: '',
   sheetLink: '',
+  // Outlook (Microsoft 365)
+  msClientId: process.env.JARVIS_MS_CLIENT_ID || '',
+  msTenant: 'organizations',
+  outlookCalendar: true,
+  outlookFlagged: true,
+  outlookMail: true,
   sheetToken: crypto.randomBytes(12).toString('hex'),
   calendarEnabled: false,
   calendarAll: false,
@@ -61,6 +70,7 @@ function emptyDb() {
     timer: null,
     sync: { queue: [], lastSyncAt: null, lastError: null },
     backups: { lastLocalAt: null, lastDriveAt: null, driveError: null, driveFolderUrl: null, scriptOutdated: false },
+    outlook: emptyOutlook(),
     meta: { lastBriefDate: null },
   };
 }
@@ -76,6 +86,7 @@ function loadDb() {
     sync: { ...base.sync, ...raw.sync },
     meta: { ...base.meta, ...raw.meta },
     backups: { ...base.backups, ...raw.backups },
+    outlook: { ...base.outlook, ...raw.outlook },
   };
 }
 
@@ -105,7 +116,7 @@ function markChanged() {
   backupTimer = setTimeout(() => runBackup(), BACKUP_DELAY);
 }
 
-const backupSnapshot = () => JSON.stringify({ ...db, sync: { ...db.sync, queue: [] } }, null, 2);
+const backupSnapshot = () => JSON.stringify({ ...db, sync: { ...db.sync, queue: [] }, outlook: undefined }, null, 2);
 
 async function runBackup({ force = false } = {}) {
   if (backingUp || (!backupDirty && !force)) return db.backups;
@@ -159,6 +170,9 @@ const publicState = () => ({
   sync: { pending: db.sync.queue.length, lastSyncAt: db.sync.lastSyncAt, lastError: db.sync.lastError },
   meta: db.meta,
   backups: db.backups,
+  outlook: outlookStatus(db.outlook, db.settings),
+  // Meetings come from Google Calendar and/or Outlook.
+  calendarActive: !!((db.settings.calendarEnabled && db.settings.sheetUrl) || (db.settings.outlookCalendar && db.outlook.refreshToken)),
 });
 
 // ------------------------------------------------------------------ domain
@@ -523,6 +537,7 @@ async function api(req, res, pathname) {
       sync: { ...base.sync },
       meta: { ...base.meta, ...data.meta },
       backups: { ...db.backups },
+      outlook: db.outlook, // stay signed in to Outlook
       timer: null,
     };
     if (db.settings.sheetUrl) { enqueueEverything(); scheduleFlush(500); }
@@ -535,7 +550,7 @@ async function api(req, res, pathname) {
       'Content-Type': 'application/json',
       'Content-Disposition': `attachment; filename="jarvis-backup-${isoDate()}.json"`,
     });
-    return res.end(JSON.stringify(db, null, 2));
+    return res.end(backupSnapshot());
   }
 
   return send(res, 404, { error: 'Unknown API route' });
@@ -589,31 +604,203 @@ async function calendarApi(req, res) {
   const to = url.searchParams.get('to') || from;
   const fresh = url.searchParams.get('refresh') === '1';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return send(res, 400, { error: 'Bad date' });
-  if (!db.settings.calendarEnabled) return send(res, 200, { enabled: false, events: [] });
-  if (!db.settings.sheetUrl) return send(res, 200, { enabled: true, events: [], error: 'Connect the Google script in Settings first.' });
+  const useGoogle = !!(db.settings.calendarEnabled && db.settings.sheetUrl);
+  const useOutlook = !!(db.settings.outlookCalendar && db.outlook.refreshToken);
+  if (!useGoogle && !useOutlook) return send(res, 200, { enabled: false, events: [] });
 
-  const key = `${from}|${to}|${db.settings.calendarAll ? 'all' : 'default'}`;
+  const key = `${from}|${to}|${useGoogle ? (db.settings.calendarAll ? 'g-all' : 'g') : ''}|${useOutlook ? 'ms' : ''}`;
   const hit = calCache.get(key);
   if (hit && !fresh && Date.now() - hit.at < CAL_TTL) return send(res, 200, { enabled: true, events: hit.events, cachedAt: hit.at });
-  try {
-    const r = await callSheet({ ops: [{ op: 'getEvents', from, to, allCalendars: !!db.settings.calendarAll }] });
-    if (!Array.isArray(r.events)) {
-      throw new Error('Your Google script is an older version. Copy the script again from Settings, paste it in, and deploy a new version.');
+
+  const errors = [];
+  let events = [];
+  if (useGoogle) {
+    try {
+      const r = await callSheet({ ops: [{ op: 'getEvents', from, to, allCalendars: !!db.settings.calendarAll }] });
+      if (!Array.isArray(r.events)) throw new Error('Your Google script is an older version. Use “Update Google script” in Settings.');
+      events.push(...r.events);
+    } catch (err) {
+      const msg = String(err.message || err);
+      errors.push(`Google Calendar: ${/permission|authoriz|calendar/i.test(msg) ? `${msg} (In Apps Script, deploy a new version and approve calendar access.)` : msg}`);
     }
-    calCache.set(key, { at: Date.now(), events: r.events });
-    return send(res, 200, { enabled: true, events: r.events, cachedAt: Date.now() });
-  } catch (err) {
-    const msg = String(err.message || err);
-    const hint = /permission|authoriz|calendar/i.test(msg)
-      ? `${msg} (In Apps Script, deploy a new version and approve calendar access.)` : msg;
-    return send(res, 200, { enabled: true, events: hit?.events || [], error: hint });
   }
+  if (useOutlook) {
+    try {
+      events.push(...await getOutlookEvents(db.outlook, db.settings, from, to));
+      db.outlook.lastError = null;
+    } catch (err) {
+      noteOutlookError(err);
+      errors.push(`Outlook: ${err.message}`);
+    } finally { save(); }
+  }
+  // Same meeting on both calendars (e.g. an invite accepted in both): keep one.
+  const seen = new Set();
+  events = events.sort((x, y) => (x.start < y.start ? -1 : 1)).filter((ev) => {
+    const k = `${ev.title.trim().toLowerCase()}|${ev.start}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  if (!errors.length) calCache.set(key, { at: Date.now(), events });
+  return send(res, 200, { enabled: true, events: errors.length && hit && !events.length ? hit.events : events, error: errors.join(' ') || null });
+}
+
+// ------------------------------------------------------------------ Outlook (Microsoft 365)
+
+const FLAG_SYNC_EVERY = 5 * 60 * 1000;
+const redirectUri = () => `http://localhost:${PORT}/api/outlook/callback`;
+let inboxCache = { at: 0, messages: [] };
+
+function noteOutlookError(err) {
+  db.outlook.lastError = String(err.message || err);
+  if (err.needsAdmin) db.outlook.needsAdmin = true;
+}
+
+/** Flagged emails become to-dos; un-flagging or completing in Outlook ticks them off. */
+async function syncFlagged() {
+  if (!db.outlook.refreshToken || !db.settings.outlookFlagged) return { added: 0, done: 0 };
+  let added = 0;
+  let done = 0;
+  try {
+    const flagged = await getFlagged(db.outlook, db.settings);
+    const known = new Map(db.todos.filter((t) => t.outlookId).map((t) => [t.outlookId, t]));
+    for (const m of flagged) {
+      const existing = known.get(m.id);
+      if (existing) {
+        // keep the due date in step with Outlook (unless the to-do was finished or deleted in Jarvis)
+        if (!existing.done && !existing.deletedAt && m.due && existing.due !== m.due) { existing.due = m.due; enqueue({ op: 'upsertTodo', id: existing.id }); }
+        continue;
+      }
+      const pm = matchProject(m.subject, db.settings.projects || []);
+      const td = addTodo({
+        text: `✉️ ${m.subject}${m.from ? ` (from ${m.from})` : ''}`,
+        project: pm?.project || '',
+        due: m.due || '',
+        priority: m.important ? 'high' : 'normal',
+      });
+      Object.assign(td, { outlookId: m.id, outlookLink: m.link, source: 'outlook' });
+      added += 1;
+    }
+    const flaggedIds = new Set(flagged.map((m) => m.id));
+    for (const t of db.todos.filter((x) => x.outlookId && !x.done && !x.deletedAt && !flaggedIds.has(x.outlookId))) {
+      const st = await flagStatus(db.outlook, db.settings, t.outlookId);
+      if (st !== 'flagged') {
+        t.done = true;
+        t.doneAt = new Date().toISOString();
+        enqueue({ op: 'upsertTodo', id: t.id });
+        done += 1;
+      }
+    }
+    db.outlook.lastSyncAt = new Date().toISOString();
+    db.outlook.lastError = null;
+    if (added || done) markChanged();
+  } catch (err) {
+    noteOutlookError(err);
+  } finally {
+    save();
+  }
+  return { added, done };
+}
+
+const page = (title, body, ok = true) => `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
+<style>body{font-family:-apple-system,ui-rounded,sans-serif;background:#fffaf2;display:grid;place-items:center;min-height:100vh;margin:0;color:#3a2c35}
+.c{background:#fff;border-radius:24px;padding:36px;max-width:440px;text-align:center;box-shadow:0 10px 30px rgba(232,100,154,.12)}
+h1{font-size:22px}p{line-height:1.5}a{color:#2f8a5a;font-weight:700}</style></head>
+<body><div class="c"><div style="font-size:52px">${ok ? '🌸' : '🌧️'}</div><h1>${title}</h1>${body}</div>
+<script>try{window.opener&&window.opener.postMessage({jarvisOutlook:${ok ? 'true' : 'false'}},'*')}catch(e){}${ok ? 'setTimeout(function(){window.close()},1800)' : ''}</script></body></html>`;
+
+async function outlookApi(req, res, pathname) {
+  const url = new URL(req.url, 'http://localhost');
+  const what = pathname.replace('/api/outlook/', '');
+  const html = (status, body) => { res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(body); };
+
+  if (what === 'login' && req.method === 'GET') {
+    if (!db.settings.msClientId) return html(400, page('One more setup step', '<p>Jarvis needs its Microsoft app ID first. Ask whoever set up Jarvis to follow “Connect Outlook: one-time setup” in the README.</p>', false));
+    res.writeHead(302, { Location: loginUrl(db.settings, redirectUri()) });
+    return res.end();
+  }
+
+  if (what === 'callback' && req.method === 'GET') {
+    const err = url.searchParams.get('error');
+    if (err) {
+      const e = explainMsError(err, url.searchParams.get('error_description'));
+      db.outlook.lastError = e.message;
+      if (e.needsAdmin) db.outlook.needsAdmin = true;
+      save();
+      return html(200, page(e.needsAdmin ? 'Your IT team needs to approve Jarvis' : 'Sign-in didn’t finish', `<p>${e.message}</p><p>You can close this window and go back to Jarvis.</p>`, false));
+    }
+    try {
+      await finishLogin(db.outlook, db.settings, { code: url.searchParams.get('code'), state: url.searchParams.get('state'), redirectUri: redirectUri() });
+      calCache.clear();
+      save();
+      syncFlagged().catch(() => {});
+      return html(200, page('Outlook is connected!', `<p>Signed in as <b>${(db.outlook.account?.email || '').replace(/[<>&"]/g, '')}</b>.</p><p>This window closes by itself. Go back to Jarvis. 🌷</p>`));
+    } catch (e2) {
+      noteOutlookError(e2);
+      save();
+      return html(200, page(e2.needsAdmin ? 'Your IT team needs to approve Jarvis' : 'Sign-in didn’t finish', `<p>${e2.message}</p><p>You can close this window and go back to Jarvis.</p>`, false));
+    }
+  }
+
+  const ok = (extra = {}) => send(res, 200, { state: publicState(), ...extra });
+
+  if (what === 'disconnect' && req.method === 'POST') {
+    db.outlook = emptyOutlook();
+    calCache.clear();
+    inboxCache = { at: 0, messages: [] };
+    save();
+    return ok();
+  }
+
+  if (what === 'test' && req.method === 'POST') {
+    try {
+      const me = await graph(db.outlook, db.settings, '/me?$select=displayName,mail,userPrincipalName');
+      db.outlook.account = { name: me.displayName || '', email: me.mail || me.userPrincipalName || '' };
+      const [events, inbox] = await Promise.all([
+        getOutlookEvents(db.outlook, db.settings, isoDate(), isoDate()),
+        getInbox(db.outlook, db.settings, 2),
+      ]);
+      const r = await syncFlagged();
+      db.outlook.lastError = null;
+      db.outlook.needsAdmin = false;
+      save();
+      return ok({ message: `✅ Connected as ${db.outlook.account.email}: ${events.length} meetings today, ${inbox.length} unread emails, ${r.added} new flagged email to-dos.` });
+    } catch (err) {
+      noteOutlookError(err);
+      save();
+      return send(res, 502, { error: err.message, state: publicState() });
+    }
+  }
+
+  if (what === 'sync' && req.method === 'POST') {
+    const r = await syncFlagged();
+    return db.outlook.lastError ? send(res, 502, { error: db.outlook.lastError, state: publicState() }) : ok(r);
+  }
+
+  if (what === 'inbox' && req.method === 'GET') {
+    if (!db.outlook.refreshToken || !db.settings.outlookMail) return send(res, 200, { enabled: false, messages: [] });
+    if (url.searchParams.get('refresh') !== '1' && Date.now() - inboxCache.at < 2 * 60 * 1000) return send(res, 200, { enabled: true, messages: inboxCache.messages });
+    try {
+      const messages = await getInbox(db.outlook, db.settings, 2);
+      inboxCache = { at: Date.now(), messages };
+      db.outlook.lastError = null;
+      save();
+      return send(res, 200, { enabled: true, messages });
+    } catch (err) {
+      noteOutlookError(err);
+      save();
+      return send(res, 200, { enabled: true, messages: inboxCache.messages, error: err.message });
+    }
+  }
+
+  return send(res, 404, { error: 'Unknown Outlook route' });
 }
 
 const server = http.createServer(async (req, res) => {
   const { pathname } = new URL(req.url, `http://${req.headers.host}`);
   try {
     if (pathname.startsWith('/api/calendar')) return await calendarApi(req, res);
+    if (pathname.startsWith('/api/outlook/')) return await outlookApi(req, res, pathname);
     if (pathname.startsWith('/api/')) return await api(req, res, pathname);
     return serveStatic(req, res, decodeURIComponent(pathname));
   } catch (err) {
@@ -627,6 +814,8 @@ server.listen(PORT, HOST, () => {
   save();
   setInterval(backup, 6 * 3600 * 1000);
   setInterval(() => runBackup(), BACKUP_CHECK);
+  setInterval(() => syncFlagged().catch(() => {}), FLAG_SYNC_EVERY);
+  setTimeout(() => syncFlagged().catch(() => {}), 5000);
   backupDirty = true; // one backup shortly after starting
   backupTimer = setTimeout(() => runBackup(), BACKUP_DELAY);
   if (db.sync.queue.length) scheduleFlush(2000);

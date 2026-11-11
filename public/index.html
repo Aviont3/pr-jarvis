@@ -84,6 +84,13 @@
             <ul class="meeting-list" id="meeting-list"></ul>
           </div>
 
+          <div class="panel inbox-panel" id="inbox-panel" hidden>
+            <div class="panel-head"><h2>📧 New emails</h2>
+              <span><a class="link" href="https://outlook.office.com/mail/" target="_blank" rel="noopener">Open Outlook</a> <button class="link" id="inbox-refresh" title="Check for new emails">↻</button></span>
+            </div>
+            <ul class="inbox-list" id="inbox-list"></ul>
+          </div>
+
           <div class="panel" id="today-panel">
             <div class="panel-head"><h2>📝 Done today</h2><span class="muted" id="today-hours"></span></div>
             <ul class="entry-list" id="today-entries"></ul>
@@ -205,6 +212,27 @@
           <input type="hidden" name="projects">
         </div>
 
+        <div class="panel outlook-panel">
+          <h2>📧 Outlook (work email &amp; calendar)</h2>
+          <div id="outlook-status" class="google-status"></div>
+          <div class="admin-box" id="outlook-admin" hidden>
+            <p><b>Send this link to your IT team</b> and ask them to approve “Jarvis”. It lets Jarvis <i>read</i> your mail and calendar (it can't send, change or delete anything):</p>
+            <div class="row"><input id="outlook-admin-url" readonly><button type="button" class="btn ghost small" id="outlook-admin-copy">📋 Copy</button></div>
+          </div>
+          <div class="row">
+            <button type="button" class="btn primary" id="outlook-signin">Sign in with Microsoft</button>
+            <button type="button" class="btn ghost" id="outlook-test" hidden>Check connection</button>
+            <button type="button" class="btn ghost" id="outlook-setup" hidden>Set up (one time)</button>
+            <button type="button" class="link" id="outlook-disconnect" hidden>Disconnect</button>
+            <span class="muted" id="outlook-msg"></span>
+          </div>
+          <div id="outlook-options">
+            <label class="check"><input type="checkbox" name="outlookCalendar"> 📅 Show my Outlook meetings</label>
+            <label class="check"><input type="checkbox" name="outlookFlagged"> 🚩 Turn flagged emails into to-dos</label>
+            <label class="check"><input type="checkbox" name="outlookMail"> 📧 Tell me about new emails (Home and morning brief)</label>
+          </div>
+        </div>
+
         <div class="panel google-panel">
           <h2>🔗 Google Sheet &amp; Calendar</h2>
           <div id="google-status" class="google-status"></div>
@@ -269,6 +297,13 @@
                 <label>Workday starts <input type="time" name="workStart"></label>
                 <label>Workday ends <input type="time" name="workEnd"></label>
               </div>
+              <h3>Outlook app details <span class="muted">(set by whoever installs Jarvis)</span></h3>
+              <label>Microsoft app (client) ID <input name="msClientId" placeholder="e.g. 1b2c3d4e-…"></label>
+              <label>Sign-in type <select name="msTenant">
+                <option value="organizations">Work or school accounts (Microsoft 365)</option>
+                <option value="common">Work, school or personal accounts</option>
+                <option value="consumers">Personal accounts only (Outlook.com)</option>
+              </select></label>
               <h3>Google connection details</h3>
               <label>Google script link <input name="sheetUrl" placeholder="https://script.google.com/macros/s/…/exec"></label>
               <label>My Google Sheet link <input name="sheetLink" placeholder="https://docs.google.com/spreadsheets/d/…"></label>

@@ -44,7 +44,8 @@ const actions = {
 
 // Calendar events live alongside the stored state (fetched from Google, not saved locally).
 let calendar = { enabled: false, events: [], error: null };
-const full = () => ({ ...state, events: calendar.events });
+let inbox = { enabled: false, messages: [], error: null }; // unread Outlook emails (not stored)
+const full = () => ({ ...state, events: calendar.events, inbox });
 const jarvis = new Jarvis(full, actions);
 
 // ------------------------------------------------------------------ spring delight: petals & flower confetti
@@ -258,6 +259,8 @@ function renderAll() {
   renderSync();
   renderGoogleStatus();
   renderBackups();
+  renderOutlook();
+  renderInbox();
   renderHello();
   renderTimer();
   renderMeetings();
@@ -358,7 +361,7 @@ function todoLi(td) {
   const dates = [stamp('Added', td.createdAt), td.done && stamp('Completed', td.doneAt, 'done-stamp')].filter(Boolean).join(' · ');
   return `<li class="${td.done ? 'done' : ''} ${td.priority === 'high' ? 'high' : ''}" data-todo="${td.id}">
     <input type="checkbox" ${td.done ? 'checked' : ''} aria-label="Done">
-    <div class="t"><span contenteditable="plaintext-only" spellcheck="false">${h(td.text)}</span>${meta ? `<div class="meta">${meta}</div>` : ''}${dates ? `<div class="meta dates">${dates}</div>` : ''}</div>
+    <div class="t"><span contenteditable="plaintext-only" spellcheck="false">${h(td.text)}</span>${meta ? `<div class="meta">${meta}${td.outlookLink ? ` · <a class="email-link" href="${h(td.outlookLink)}" target="_blank" rel="noopener">✉️ Open email</a>` : ''}</div>` : ''}${dates ? `<div class="meta dates">${dates}</div>` : ''}</div>
     <button class="x" title="Delete">✕</button></li>`;
 }
 
@@ -1010,9 +1013,11 @@ function renderSettings() {
   renderProjectEditor(s.projects || []);
   renderGoogleStatus();
   f.sheetLink.value = s.sheetLink || '';
+  f.msClientId.value = s.msClientId || '';
+  f.msTenant.value = s.msTenant || 'organizations';
   f.keywords.value = keywordsToText(s.categories || [], s.keywords || {});
   f.defaultCategory.innerHTML = categoryOptions(s.defaultCategory);
-  for (const k of ['speakReplies', 'autoBrief', 'notesToTodos', 'autoSaveVoiceLogs', 'calendarEnabled', 'calendarAll', 'meetingPrompts', 'driveBackup']) f[k].checked = !!s[k];
+  for (const k of ['speakReplies', 'autoBrief', 'notesToTodos', 'autoSaveVoiceLogs', 'calendarEnabled', 'calendarAll', 'meetingPrompts', 'driveBackup', 'outlookCalendar', 'outlookFlagged', 'outlookMail']) f[k].checked = !!s[k];
   f.meetingCategory.innerHTML = categoryOptions(s.meetingCategory).replace('<option value="">(none)</option>', '');
   f.checkInMinutes.value = String(s.checkInMinutes || 0);
   f.workStart.value = s.workStart || '09:00';
@@ -1027,7 +1032,7 @@ let saveTimer = null;
 const settingsForm = $('#settings-form');
 settingsForm.addEventListener('change', (ev) => { if (ev.target.id !== 'project-add') saveSettings(); });
 settingsForm.addEventListener('input', (ev) => {
-  if (['userName', 'keywords', 'sheetUrl', 'sheetLink'].includes(ev.target.name)) {
+  if (['userName', 'keywords', 'sheetUrl', 'sheetLink', 'msClientId'].includes(ev.target.name)) {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(saveSettings, 800);
   }
@@ -1037,7 +1042,6 @@ async function saveSettings() {
   clearTimeout(saveTimer);
   const f = settingsForm;
   const { categories, keywords } = textToKeywords(f.keywords.value);
-  const prevCal = state.settings.calendarEnabled;
   const body = {
     userName: f.userName.value.trim(),
     projects: JSON.parse(f.projects.value || '[]'),
@@ -1049,12 +1053,15 @@ async function saveSettings() {
     calendarEnabled: f.calendarEnabled.checked, calendarAll: f.calendarAll.checked,
     meetingPrompts: f.meetingPrompts.checked, meetingCategory: f.meetingCategory.value,
     driveBackup: f.driveBackup.checked,
+    outlookCalendar: f.outlookCalendar.checked, outlookFlagged: f.outlookFlagged.checked, outlookMail: f.outlookMail.checked,
+    msClientId: f.msClientId.value.trim(), msTenant: f.msTenant.value,
     voiceName: f.voiceName.value, checkInMinutes: Number(f.checkInMinutes.value),
     workStart: f.workStart.value, workEnd: f.workEnd.value, sheetUrl: f.sheetUrl.value.trim(),
   };
   if (!categories.length) { toast('The types of work list can’t be empty'); return; }
   await api('PATCH', 'settings', body);
-  if (body.calendarEnabled !== prevCal || body.calendarEnabled) loadCalendar(body.calendarEnabled !== prevCal);
+  loadCalendar(true);
+  loadInbox(true);
   renderGoogleStatus();
   $('#settings-msg').textContent = '✓ Saved';
   clearTimeout(saveSettings.t);
@@ -1145,7 +1152,7 @@ function renderHello() {
   const open = state.todos.filter((x) => !x.done).length;
   const bits = [hrs ? `${fmtHours(hrs)} logged today` : 'Nothing logged yet today', `${open} ${open === 1 ? 'to-do' : 'to-dos'}`];
   $('#hello').innerHTML = `<h1>${part}${name ? `, ${h(name)}` : ''} ${flower}</h1><p>${bits.join(' · ')}</p>`;
-  $('#chip-meetings').hidden = !state.settings.calendarEnabled;
+  $('#chip-meetings').hidden = !state.calendarActive;
 }
 
 $('#qa-talk').onclick = () => { $('#jarvis-panel').scrollIntoView({ behavior: 'smooth', block: 'center' }); voice.toggle(); };
@@ -1526,6 +1533,154 @@ $('#help-google').onclick = () => { helpDlg.close(); openGoogleGuide(); };
 $('#google-connect').onclick = () => openGoogleGuide();
 $('#rerun-welcome').onclick = () => openWelcome();
 
+// ---- Outlook (Microsoft 365)
+
+function renderOutlook() {
+  const o = state.outlook || {};
+  const el = $('#outlook-status');
+  if (!el) return;
+  $('#outlook-admin').hidden = !o.needsAdmin;
+  if (o.needsAdmin && o.adminConsentUrl) $('#outlook-admin-url').value = o.adminConsentUrl;
+  $('#outlook-setup').hidden = !!o.configured;
+  $('#outlook-signin').hidden = !o.configured;
+  $('#outlook-test').hidden = !o.connected;
+  $('#outlook-disconnect').hidden = !o.connected;
+  $('#outlook-options').hidden = !o.connected;
+  $('#outlook-signin').textContent = o.connected ? 'Sign in again' : '🔑 Sign in with Microsoft';
+  $('#outlook-signin').className = `btn ${o.connected ? 'ghost' : 'primary'}`;
+  if (!o.configured) {
+    el.className = 'google-status off';
+    el.innerHTML = '<b>Needs a one-time setup first.</b> Whoever installed Jarvis registers it with Microsoft once (about 5 minutes). Click “Set up (one time)” for step-by-step help.';
+  } else if (o.connected && o.lastError) {
+    el.className = 'google-status err';
+    el.innerHTML = `<b>⚠️ ${h(o.account?.email || 'Outlook')}:</b> ${h(o.lastError)}`;
+  } else if (o.connected) {
+    el.className = 'google-status on';
+    el.innerHTML = `<b>✅ Connected</b> as ${h(o.account?.email || '')}. Jarvis can read your mail and calendar, but never sends, changes or deletes anything.`;
+  } else if (o.needsAdmin) {
+    el.className = 'google-status err';
+    el.innerHTML = '<b>Waiting for IT approval.</b> Your company needs to approve Jarvis before it can read Outlook.';
+  } else {
+    el.className = 'google-status off';
+    el.innerHTML = `<b>Not connected yet.</b> Sign in with your work Microsoft account to see Outlook meetings, turn flagged emails into to-dos and hear about new emails.${o.lastError ? `<br><span class="bad">${h(o.lastError)}</span>` : ''}`;
+  }
+}
+
+let msWindow = null;
+$('#outlook-signin').onclick = () => {
+  msWindow = window.open('/api/outlook/login', 'jarvis-microsoft', 'width=520,height=720');
+  $('#outlook-msg').textContent = 'Finish signing in in the Microsoft window…';
+  const watch = setInterval(async () => {
+    if (msWindow && !msWindow.closed) return;
+    clearInterval(watch);
+    await afterOutlookSignIn();
+  }, 800);
+};
+window.addEventListener('message', (ev) => { if (ev.data && 'jarvisOutlook' in ev.data) afterOutlookSignIn(); });
+async function afterOutlookSignIn() {
+  await api('GET', 'state');
+  $('#outlook-msg').textContent = '';
+  if (state.outlook?.connected && !afterOutlookSignIn.shown) {
+    afterOutlookSignIn.shown = true;
+    celebrate($('#outlook-status'));
+    toast('📧 Outlook is connected!');
+    loadCalendar(true);
+    loadInbox(true);
+  }
+}
+$('#outlook-test').onclick = async () => {
+  const msg = $('#outlook-msg');
+  msg.textContent = 'Checking Outlook…';
+  try { msg.textContent = (await api('POST', 'outlook/test')).message; } catch (err) { msg.textContent = `❌ ${err.message}`; }
+};
+$('#outlook-disconnect').onclick = async () => {
+  if (!confirm('Disconnect Outlook? Jarvis will stop showing your Outlook meetings and emails. (To-dos already made from flagged emails stay.)')) return;
+  afterOutlookSignIn.shown = false;
+  await api('POST', 'outlook/disconnect');
+  loadCalendar(true);
+  loadInbox(true);
+  toast('Outlook disconnected');
+};
+$('#outlook-admin-copy').onclick = () => { navigator.clipboard.writeText($('#outlook-admin-url').value); toast('Approval link copied. Paste it into an email to IT 📋'); };
+$('#outlook-setup').onclick = () => openOutlookSetupGuide();
+
+// Inbox: unread emails (Home panel + morning brief + "any new emails?")
+async function loadInbox(refresh = false) {
+  if (!state.outlook?.connected || !state.settings.outlookMail) { inbox = { enabled: false, messages: [], error: null }; renderInbox(); return inbox; }
+  try {
+    const r = await (await fetch(`/api/outlook/inbox${refresh ? '?refresh=1' : ''}`)).json();
+    inbox = { enabled: !!r.enabled, messages: r.messages || [], error: r.error || null };
+  } catch (err) { inbox = { ...inbox, error: err.message }; }
+  renderInbox();
+  return inbox;
+}
+function renderInbox() {
+  const panel = $('#inbox-panel');
+  if (!panel) return;
+  panel.hidden = !inbox.enabled;
+  if (!inbox.enabled) return;
+  const msgs = inbox.messages || [];
+  const when = (iso) => {
+    const d = new Date(iso);
+    return isoDate(d) === isoDate() ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
+  $('#inbox-list').innerHTML = (inbox.error ? `<li class="cal-error">⚠️ ${h(inbox.error)}</li>` : '')
+    + (msgs.length ? msgs.slice(0, 6).map((m) => `
+      <li class="${m.important || m.focused ? 'imp' : ''}"><a href="${h(m.link)}" target="_blank" rel="noopener">
+        <span class="from">${m.important ? '❗ ' : ''}${h(m.from || 'Someone')}</span><span class="when">${when(m.received)}</span>
+        <span class="subj">${h(m.subject)}</span></a></li>`).join('')
+      + (msgs.length > 6 ? `<li class="more muted">+ ${msgs.length - 6} more unread</li>` : '')
+      : (inbox.error ? '' : '<li class="empty">No new emails. Inbox zero vibes 🌷</li>'));
+}
+$('#inbox-refresh').onclick = async () => { await loadInbox(true); toast('📧 Checked for new emails'); };
+
+// One-time Microsoft app registration, for whoever installs Jarvis.
+function openOutlookSetupGuide() {
+  const redirect = `${location.origin.replace('127.0.0.1', 'localhost')}/api/outlook/callback`;
+  runGuide([
+    {
+      emoji: '🧰', title: 'Connect Outlook: one-time setup',
+      html: `<p class="lead">Microsoft only lets apps sign in once they're registered. This is done <b>once</b>, by whoever installs Jarvis. It takes about 5 minutes and is free.</p>
+             <p class="muted">You'll need to sign in to the Azure portal with a Microsoft work account. If your company doesn't let you register apps, send these steps to IT.</p>`,
+      noBack: true,
+    },
+    {
+      emoji: '📝', title: 'Register the app',
+      html: `<ol class="click-steps">
+        <li>Open <a href="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade" target="_blank" rel="noopener"><b>Azure portal → App registrations</b></a> and click ${ui('+ New registration', 'blue')}.</li>
+        <li>Name: <b>Jarvis</b>.</li>
+        <li>Supported account types: ${ui('Accounts in any organizational directory (Multitenant)', 'hl')}.</li>
+        <li>Redirect URI: choose ${ui('Public client/native (mobile &amp; desktop)', 'hl')} and paste:<br><code>${redirect}</code> <button type="button" class="btn ghost small" id="ms-copy-redirect">📋 Copy</button></li>
+        <li>Click ${ui('Register', 'blue')}.</li></ol>`,
+      onShow: (body) => { $('#ms-copy-redirect', body).onclick = () => { navigator.clipboard.writeText(redirect); toast('Copied'); }; },
+    },
+    {
+      emoji: '🔐', title: 'Allow sign-in and reading mail & calendar',
+      html: `<ol class="click-steps">
+        <li>In the new app, open ${ui('Authentication')}, turn <b>Allow public client flows</b> to ${ui('Yes', 'hl')}, and click ${ui('Save', 'blue')}.</li>
+        <li>Open ${ui('API permissions')} → ${ui('+ Add a permission')} → ${ui('Microsoft Graph')} → ${ui('Delegated permissions')}.</li>
+        <li>Tick ${ui('Calendars.Read')}, ${ui('Mail.Read')}, ${ui('User.Read')} and ${ui('offline_access')}, then click ${ui('Add permissions', 'blue')}.</li>
+        <li>If you're an admin, click ${ui('Grant admin consent')}. If not, that's fine: Jarvis will give you a link to send to IT if it's needed.</li></ol>`,
+    },
+    {
+      emoji: '🔑', title: 'Paste the app ID',
+      html: `<p>On the app's ${ui('Overview')} page, copy the <b>Application (client) ID</b> and paste it here:</p>
+             <input class="big-input" id="ms-client-id" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" value="${h(state.settings.msClientId || '')}">`,
+      onNext: async (body) => {
+        const id = $('#ms-client-id', body).value.trim();
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) { toast('That doesn’t look like an app ID. It has 5 groups of letters and numbers.'); return false; }
+        await api('PATCH', 'settings', { msClientId: id });
+        return true;
+      },
+    },
+    {
+      emoji: '🎉', title: 'All set!',
+      html: '<p class="lead">Now click <b>🔑 Sign in with Microsoft</b> in Settings and sign in with the work account.</p><p class="muted">This setup never has to be done again, even after updates.</p>',
+      noBack: true,
+    },
+  ], () => { renderAll(); renderSettings(); });
+}
+
 // ---- Saving & backups
 
 const timeAgo = (iso) => {
@@ -1711,7 +1866,7 @@ $('#update-now').onclick = async () => {
 // ------------------------------------------------------------------ Google Calendar meetings
 
 async function loadCalendar(refresh = false) {
-  if (!state.settings.calendarEnabled) { calendar = { enabled: false, events: [], error: null }; renderMeetings(); return calendar; }
+  if (!state.calendarActive) { calendar = { enabled: false, events: [], error: null }; renderMeetings(); return calendar; }
   // Monday of this week through a week from today covers "today", "tomorrow" and "this week".
   const now = new Date();
   const monday = addDays(now, -((now.getDay() + 6) % 7));
@@ -1729,7 +1884,7 @@ async function loadCalendar(refresh = false) {
 function renderMeetings() {
   if (typeof calendar === 'undefined') return;
   const panel = $('#meetings-panel');
-  panel.hidden = !state.settings.calendarEnabled;
+  panel.hidden = !state.calendarActive;
   if (panel.hidden) return;
   const now = new Date();
   const todays = meetingsOn(calendar.events, isoDate(now));
@@ -1777,7 +1932,7 @@ $('#cal-test').onclick = async () => {
 // Ask once per meeting, shortly after it ends.
 const PROMPTED_KEY = 'jarvis.promptedMeetings';
 function meetingTick() {
-  if (!state.settings.calendarEnabled || !state.settings.meetingPrompts) return;
+  if (!state.calendarActive || !state.settings.meetingPrompts) return;
   const prompted = new Set(JSON.parse(localStorage.getItem(PROMPTED_KEY) || '[]'));
   const now = Date.now();
   const just = unloggedMeetings(full(), new Date()).filter((ev) => !prompted.has(ev.id) && now - new Date(ev.end) < 15 * 60000);
@@ -1842,7 +1997,7 @@ async function boot() {
   startPetals();
   await api('GET', 'state');
   show((location.hash || '#today').slice(1) || 'today');
-  await loadCalendar();
+  await Promise.all([loadCalendar(), loadInbox()]);
   const today = isoDate();
   const firstTime = !state.meta?.onboarded && !state.settings.userName;
   if (firstTime) {
@@ -1857,6 +2012,7 @@ async function boot() {
   }
   setInterval(rhythmTick, 60000);
   setInterval(() => loadCalendar(), 5 * 60000);
+  setInterval(() => loadInbox(), 5 * 60000);
   setInterval(() => { if (state.sync?.pending) api('GET', 'state'); }, 15000);
   setInterval(() => { if ($('#view-settings').classList.contains('active')) api('GET', 'state'); }, 30000);
   checkForUpdates();

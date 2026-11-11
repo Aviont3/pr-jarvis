@@ -333,6 +333,12 @@ export function parseCommand(input, ctx = {}) {
 
   if (/\b(wrap (it |things )?up|wrap ?up|end of (the )?day|end my day|eod|good ?night|day summary|daily summary|how did i do today|close out (my|the) day)\b/.test(t)) return out('wrapup');
 
+  // Email (Outlook): "any new emails?", "check my email", "read me my emails", "what's in my inbox"
+  if (!/^(?:log|logged|i spent|spent|record)\b/.test(t) && !parseDuration(text) &&
+      /^(?:any|check|read|what'?s in|what is in|do i have|show|open|how many|did i get|anything (?:new|important) in)\b.*\b(e-?mails?|inbox|mail|messages)\b|^(?:new|unread|important) (?:e-?mails?|mail|messages)\b|^(?:my )?(?:e-?mails?|inbox)\??$/.test(t)) {
+    return out('email_check', { important: /\b(important|urgent)\b/.test(t) });
+  }
+
   // Calendar
   if (/^(?:log|record|track|add)\s+(?:all\s+)?(?:of\s+)?(?:my|the|today'?s)?\s*(?:meetings|calls|calendar)\b/.test(t)) {
     return out('calendar_log', { query: '' });
