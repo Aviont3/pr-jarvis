@@ -2,6 +2,7 @@ import { Jarvis } from './jarvis.js';
 import { Voice } from './voice.js';
 import { parseCommand, guessCategory, shortTask } from './parser.js';
 import { HELP } from './jarvis.js';
+import { initProjects } from './projects.js';
 import {
   stats, todoBuckets, sortTodos, buildReport, toCsv, displayProject, filterEntries, morningBrief, wrapUp,
   meetingsOn, isMeetingLogged, meetingToEntry, unloggedMeetings, fmtTime, meetingHours,
@@ -40,6 +41,7 @@ const actions = {
   startTimer: async (t) => (await api('POST', 'timer/start', t)).item,
   stopTimer: async (note) => (await api('POST', 'timer/stop', { note })).item,
   cancelTimer: async () => api('POST', 'timer/cancel'),
+  scanCoverage: async (project) => api('POST', `projects/${encodeURIComponent(project)}/scan`),
 };
 
 // Calendar events live alongside the stored state (fetched from Google, not saved locally).
@@ -225,6 +227,13 @@ function jarvisSay(res, speak = true) {
     el.append(b);
   }
   if (res.openEntry) setTimeout(() => openEntry(res.openEntry), 300);
+  if (res.openProject) {
+    const b = Object.assign(document.createElement('button'), { className: 'btn ghost small', textContent: `🌷 Open ${displayProject(res.openProject.name)}` });
+    b.style.marginTop = '8px';
+    b.onclick = () => projectsPage.open(res.openProject.name, res.openProject.tab);
+    el.append(b);
+    if (res.openProject.go) setTimeout(() => projectsPage.open(res.openProject.name, res.openProject.tab), 600);
+  }
   if (res.card?.kind === 'day') {
     const b = Object.assign(document.createElement('button'), { className: 'btn ghost small', textContent: '📒 Open this day in My Work' });
     b.style.marginTop = '8px';
@@ -268,6 +277,8 @@ function renderAll() {
   renderTodos();
   if ($('#view-log').classList.contains('active')) renderLog();
   if ($('#view-dashboard').classList.contains('active')) renderDashboard();
+  if (typeof projectsPage !== 'undefined') projectsPage.render();
+  renderProjectsBadge();
   fillProjectSelects();
 }
 
@@ -663,7 +674,7 @@ function renderLog() {
     .sort((a, b) => (a.date === b.date ? ((a.createdAt < b.createdAt) === isDay ? -1 : 1) : a.date < b.date ? 1 : -1));
   $('#log-body').innerHTML = es.length ? es.map((e) => `
     <tr data-entry="${e.id}" title="Click to change">
-      <td class="nowrap"><button type="button" class="link day-link" data-day="${e.date}" title="See everything from this day">${fmtDate(e.date)}</button></td><td>${h(displayProject(e.project))}</td>
+      <td class="nowrap"><button type="button" class="link day-link" data-day="${e.date}" title="See everything from this day">${fmtDate(e.date)}</button></td><td>${e.project ? `<button type="button" class="link proj-link" data-open-project="${h(e.project)}" title="Open this project">${h(displayProject(e.project))}</button>` : ''}</td>
       <td class="wd">${h(e.workDone || e.task)}</td><td>${e.category ? `<span class="tag">${h(e.category)}</span>` : ''}</td>
       <td class="num">${fmtNum(e.hours)}</td><td>${h(e.notes)}</td><td class="actions-col">${rowActions(e)}</td>
     </tr>`).join('') : `<tr><td colspan="7" class="empty">${isDay
@@ -1100,6 +1111,7 @@ function show(view) {
   if (view === 'log') renderLog();
   if (view === 'dashboard') renderDashboard();
   if (view === 'settings') renderSettings();
+  if (view === 'projects') projectsPage.render();
   location.hash = view;
 }
 $$('.tabs button').forEach((b) => { b.onclick = () => show(b.dataset.view); });
@@ -1989,6 +2001,24 @@ async function rhythmTick() {
     jarvisSay({ ...r, title: "It's end of day. Here's your wrap-up" });
     notify('End of day: your wrap-up is ready.');
   }
+}
+
+// ------------------------------------------------------------------ projects page
+
+const projectsPage = initProjects({
+  getState: () => state, api, actions, toast, celebrate, openEntry, todoLi, rowActions, parseQuickTodo, show,
+});
+document.addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-open-project]');
+  if (b) { ev.preventDefault(); projectsPage.open(b.dataset.openProject); }
+});
+function renderProjectsBadge() {
+  const n = Object.values(state.coverageSummary || {}).reduce((a, c) => a + (c.new || 0), 0);
+  const badge = $('#projects-badge');
+  if (!badge) return;
+  badge.hidden = !n;
+  badge.textContent = n;
+  badge.title = `${n} new coverage ${n === 1 ? 'article' : 'articles'}`;
 }
 
 // ------------------------------------------------------------------ boot

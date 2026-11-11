@@ -333,6 +333,23 @@ export function parseCommand(input, ctx = {}) {
 
   if (/\b(wrap (it |things )?up|wrap ?up|end of (the )?day|end my day|eod|good ?night|day summary|daily summary|how did i do today|close out (my|the) day)\b/.test(t)) return out('wrapup');
 
+  // Projects: "open the Acme project", "prepare the Acme agenda", "any new coverage for Acme?", "scan coverage for Nike"
+  if (!/^(?:log|logged|i spent|spent|record)\b/.test(t) && !parseDuration(text)) {
+    if (/\b(coverage|press hits|clips|press mentions|news mentions)\b/.test(t) && /^(?:any|scan|check|find|search|show|what|did|look|get|pull|new|open)\b|\b(new coverage|coverage for|coverage about|coverage on)\b/.test(t)) {
+      const pm = matchProject(text, projects);
+      return out('coverage_check', { project: pm?.project || '', scan: /\b(scan|check|search|find|look|pull)\b/.test(t) });
+    }
+    if (/\bagenda\b/.test(t)) {
+      const pm = matchProject(text, projects);
+      if (pm) return out('project_open', { project: pm.project, tab: 'agenda' });
+    }
+    const po = text.match(/^(?:open|show(?: me)?|go to|pull up|take me to)\s+(?:the\s+)?(?:project\s+)?(.+?)(?:\s+project)?$/i);
+    if (po && /\bproject\b/i.test(text)) {
+      const pm = matchProject(po[1], projects);
+      if (pm) return out('project_open', { project: pm.project, tab: 'overview' });
+    }
+  }
+
   // Email (Outlook): "any new emails?", "check my email", "read me my emails", "what's in my inbox"
   if (!/^(?:log|logged|i spent|spent|record)\b/.test(t) && !parseDuration(text) &&
       /^(?:any|check|read|what'?s in|what is in|do i have|show|open|how many|did i get|anything (?:new|important) in)\b.*\b(e-?mails?|inbox|mail|messages)\b|^(?:new|unread|important) (?:e-?mails?|mail|messages)\b|^(?:my )?(?:e-?mails?|inbox)\??$/.test(t)) {

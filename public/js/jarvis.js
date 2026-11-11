@@ -20,6 +20,7 @@ export const HELP = {
     { heading: 'Timer', items: ['"Start working on Acme press release"', '"Stop" / "Done"', '"What am I working on?"', '"Cancel timer"'] },
     { heading: 'To-dos', items: ['"Add to-do: follow up with Axios Friday"', '"Remind me to send the recap tomorrow, urgent"', '"What\'s on my list?"', '"Check off follow up with Axios"', '"Move follow up with Axios to Friday"', '"Put the venue under Nike"', '"Make the venue urgent"', '"What\'s on my list for Acme?"', '"What\'s due this week?"', '"What\'s urgent?"'] },
     { heading: 'Questions & reports', items: ['"How many hours on Acme this month?"', '"What did I do yesterday?"', '"What did I do on October 19th?"', '"Weekly report" / "Report for Nike last week"'] },
+    { heading: 'Projects & coverage', items: ['"Open the Acme project"', '"Prepare the Acme agenda"', '"Any new coverage?"', '"Scan coverage for Nike"'] },
     { heading: 'Email (Outlook)', items: ['"Any new emails?"', '"Any important emails?"', '"Check my inbox"'] },
     { heading: 'Calendar', items: ['"What meetings do I have today?"', '"When\'s my next meeting?"', '"Log my meetings"', '"Log the Acme check-in meeting"'] },
     { heading: 'Daily rhythm', items: ['"Morning brief"', '"Wrap up my day"'] },
@@ -189,6 +190,37 @@ export class Jarvis {
       case 'no': return say('Okay.');
 
       case 'brief': return morningBrief(state, now);
+
+      case 'project_open': {
+        const name = displayProject(cmd.project);
+        if (cmd.tab === 'agenda') {
+          return say(`Here's the agenda for ${name}. I've filled it in from your recent work, coverage and open to-dos. Edit it, then send it.`, { openProject: { name: cmd.project, tab: 'agenda', go: true } });
+        }
+        return say(`Opening ${name}.`, { openProject: { name: cmd.project, tab: cmd.tab || 'overview', go: true } });
+      }
+
+      case 'coverage_check': {
+        const summary = state.coverageSummary || {};
+        if (cmd.project) {
+          const name = displayProject(cmd.project);
+          let added = null;
+          if (cmd.scan && this.actions.scanCoverage) {
+            try { added = (await this.actions.scanCoverage(cmd.project)).added; } catch (err) { return say(`I couldn't search the news just now: ${err.message}`); }
+          }
+          const s = (this.getState().coverageSummary || {})[cmd.project] || { new: 0, kept: 0, latestNew: [] };
+          const lead = added == null ? '' : added ? `I found ${added} new ${added === 1 ? 'article' : 'articles'}. ` : 'Nothing new in the news just now. ';
+          const items = s.latestNew.map((c) => `${c.outlet || 'News'}: ${c.title}`);
+          return say(`${lead}${name} has ${s.new} new ${s.new === 1 ? 'article' : 'articles'} to review and ${s.kept} kept.${items.length ? ` Latest: ${items[0]}.` : ''}`, {
+            title: `📰 Coverage · ${name}`, sections: items.length ? [{ heading: 'New articles', items }] : [], openProject: { name: cmd.project, tab: 'coverage' },
+          });
+        }
+        const withNew = Object.entries(summary).filter(([, v]) => v.new);
+        if (!withNew.length) return say('No new coverage to review. Say “scan coverage for Acme” to search the news now.');
+        return say(`New coverage to review: ${withNew.map(([p, v]) => `${v.new} for ${displayProject(p)}`).join(', ')}.`, {
+          title: '📰 New coverage',
+          sections: withNew.map(([p, v]) => ({ heading: displayProject(p), items: v.latestNew.map((c) => `${c.outlet || 'News'}: ${c.title}`) })),
+        });
+      }
 
       case 'email_check': {
         if (!state.outlook?.connected) return say('Outlook isn’t connected yet. Go to ⚙️ Settings → Outlook and click “Sign in with Microsoft”.');

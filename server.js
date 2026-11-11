@@ -12,6 +12,7 @@ import { DEFAULT_CATEGORY_KEYWORDS, matchProject } from './public/js/parser.js';
 import {
   emptyOutlook, outlookStatus, loginUrl, finishLogin, explainMsError, getOutlookEvents, getFlagged, flagStatus, getInbox, graph,
 } from './outlook.js';
+import { scanNews } from './coverage.js';
 import { isoDate, roundHours } from './public/js/util.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -71,6 +72,8 @@ function emptyDb() {
     sync: { queue: [], lastSyncAt: null, lastError: null },
     backups: { lastLocalAt: null, lastDriveAt: null, driveError: null, driveFolderUrl: null, scriptOutdated: false },
     outlook: emptyOutlook(),
+    projectInfo: {}, // per project: client, coverage search words, agenda draft & history
+    coverage: [],    // news articles found about clients
     meta: { lastBriefDate: null },
   };
 }
@@ -173,6 +176,8 @@ const publicState = () => ({
   outlook: outlookStatus(db.outlook, db.settings),
   // Meetings come from Google Calendar and/or Outlook.
   calendarActive: !!((db.settings.calendarEnabled && db.settings.sheetUrl) || (db.settings.outlookCalendar && db.outlook.refreshToken)),
+  projectInfo: db.projectInfo,
+  coverageSummary: coverageSummary(),
 });
 
 // ------------------------------------------------------------------ domain
@@ -367,7 +372,7 @@ async function api(req, res, pathname) {
   const body = ['POST', 'PATCH', 'PUT'].includes(m) ? await readBody(req) : {};
   const ok = (extra = {}) => {
     save();
-    if (m !== 'GET' && ['entries', 'todos', 'timer', 'settings'].includes(resource)) markChanged();
+    if (m !== 'GET' && ['entries', 'todos', 'timer', 'settings', 'projects', 'coverage'].includes(resource)) markChanged();
     return send(res, 200, { state: publicState(), ...extra });
   };
 
@@ -403,6 +408,74 @@ async function api(req, res, pathname) {
         enqueue({ op: 'upsertTodo', id: t.id });
       }
       return ok({ item: entry });
+    }
+  }
+
+  // ---------------------------------------------------------------- projects
+  if (resource === 'projects') {
+    const name = id ? decodeURIComponent(id) : '';
+    if (m === 'POST' && !id) {
+      const n = String(body.name || '').trim();
+      if (!n) return send(res, 400, { error: 'Give the project a name.' });
+      const existing = db.settings.projects.find((x) => x.toLowerCase() === n.toLowerCase());
+      if (!existing) db.settings.projects.push(n);
+      const key = existing || n;
+      db.projectInfo[key] = { ...projectInfo(key), ...pick(body, PROJECT_FIELDS) };
+      enqueue({ op: 'setLists' });
+      return ok({ item: key });
+    }
+    if (!name || !db.settings.projects.includes(name)) return send(res, 404, { error: 'That project doesn’t exist.' });
+    if (m === 'PATCH' && !action) {
+      Object.assign(projectInfo(name), pick(body, PROJECT_FIELDS));
+      return ok({ item: name });
+    }
+    if (m === 'POST' && action === 'rename') {
+      const to = String(body.to || '').trim();
+      if (!to) return send(res, 400, { error: 'Type the new name.' });
+      if (to !== name && db.settings.projects.includes(to)) return send(res, 400, { error: 'There’s already a project with that name.' });
+      renameProject(name, to);
+      return ok({ item: to });
+    }
+    if (m === 'POST' && action === 'scan') {
+      const r = await scanProject(name);
+      return r.error ? send(res, 502, { error: r.error, state: publicState() }) : ok(r);
+    }
+    if (m === 'POST' && action === 'agenda-sent') {
+      const info = projectInfo(name);
+      info.agendaHistory = [{ sentAt: new Date().toISOString(), subject: String(body.subject || ''), body: String(body.body || '') }, ...(info.agendaHistory || [])].slice(0, 50);
+      info.agendaLastSent = info.agendaHistory[0].sentAt;
+      info.agenda = null; // next time, start a fresh draft from what's new
+      return ok({ item: name });
+    }
+  }
+
+  // ---------------------------------------------------------------- coverage
+  if (resource === 'coverage') {
+    if (m === 'GET') {
+      const url = new URL(req.url, 'http://localhost');
+      const project = url.searchParams.get('project');
+      const items = db.coverage.filter((c) => !project || c.project === project)
+        .sort((a, b) => ((b.publishedAt || b.foundAt) > (a.publishedAt || a.foundAt) ? 1 : -1));
+      return send(res, 200, { items });
+    }
+    if (m === 'POST' && !id) { // add an article by hand (e.g. print or a paywalled link)
+      const title = String(body.title || '').trim();
+      const project = String(body.project || '');
+      if (!title || !db.settings.projects.includes(project)) return send(res, 400, { error: 'Add a headline and pick a project.' });
+      const item = {
+        id: uid(), project, title, url: String(body.url || '').trim(), outlet: String(body.outlet || '').trim(), outletUrl: '',
+        publishedAt: body.publishedAt ? new Date(`${body.publishedAt}T12:00:00`).toISOString() : new Date().toISOString(),
+        foundAt: new Date().toISOString(), snippet: '', status: 'kept', manual: true,
+      };
+      db.coverage.push(item);
+      return ok({ item });
+    }
+    if (m === 'PATCH' && id) {
+      const c = db.coverage.find((x) => x.id === id);
+      if (!c) return send(res, 404, { error: 'Not found' });
+      if (['new', 'kept', 'dismissed'].includes(body.status)) c.status = body.status;
+      if (typeof body.note === 'string') c.note = body.note;
+      return ok({ item: c });
     }
   }
 
@@ -645,6 +718,78 @@ async function calendarApi(req, res) {
   return send(res, 200, { enabled: true, events: errors.length && hit && !events.length ? hit.events : events, error: errors.join(' ') || null });
 }
 
+// ------------------------------------------------------------------ projects & coverage
+
+const PROJECT_FIELDS = ['client', 'terms', 'exclude', 'outlets', 'scan', 'recipients', 'agenda', 'notes'];
+const COVERAGE_EVERY = 6 * 3600 * 1000;
+
+function projectInfo(name) {
+  if (!db.projectInfo[name]) db.projectInfo[name] = { client: '', terms: '', exclude: '', outlets: '', scan: false, recipients: '', agenda: null, agendaHistory: [], notes: '' };
+  return db.projectInfo[name];
+}
+
+function coverageSummary() {
+  const out = {};
+  for (const c of db.coverage) {
+    const s = out[c.project] || (out[c.project] = { new: 0, kept: 0, latestNew: [] });
+    if (c.status === 'new') { s.new += 1; s.latestNew.push({ title: c.title, outlet: c.outlet, publishedAt: c.publishedAt }); }
+    if (c.status === 'kept') s.kept += 1;
+  }
+  for (const s of Object.values(out)) s.latestNew = s.latestNew.sort((a, b) => ((b.publishedAt || '') > (a.publishedAt || '') ? 1 : -1)).slice(0, 3);
+  return out;
+}
+
+/** Rename a project everywhere: settings, work entries, to-dos, details and coverage. */
+function renameProject(from, to) {
+  db.settings.projects = db.settings.projects.map((x) => (x === from ? to : x));
+  for (const e of db.entries) if (e.project === from) { e.project = to; enqueue({ op: 'upsertEntry', id: e.id }); }
+  for (const t of db.todos) if (t.project === from) { t.project = to; enqueue({ op: 'upsertTodo', id: t.id }); }
+  for (const c of db.coverage) if (c.project === from) c.project = to;
+  if (db.projectInfo[from]) { db.projectInfo[to] = db.projectInfo[from]; delete db.projectInfo[from]; }
+  if (db.timer?.project === from) db.timer.project = to;
+  enqueue({ op: 'setLists' });
+}
+
+const titleKey = (t) => String(t).toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 80);
+
+/** Search the news for one project and store new articles. */
+async function scanProject(name) {
+  const info = projectInfo(name);
+  try {
+    const found = await scanNews(name, info, info.lastScanAt ? 7 : 30);
+    const mine = db.coverage.filter((c) => c.project === name);
+    const urls = new Set(mine.map((c) => c.url));
+    const titles = new Set(mine.map((c) => titleKey(c.title)));
+    let added = 0;
+    for (const a of found) {
+      if (urls.has(a.url) || titles.has(titleKey(a.title))) continue;
+      db.coverage.push({ id: uid(), project: name, ...a, foundAt: new Date().toISOString(), status: 'new' });
+      urls.add(a.url); titles.add(titleKey(a.title));
+      added += 1;
+    }
+    // keep the list tidy: at most 300 articles per project (kept ones are never dropped)
+    const forProject = db.coverage.filter((c) => c.project === name && c.status !== 'kept')
+      .sort((a, b) => ((b.publishedAt || b.foundAt) > (a.publishedAt || a.foundAt) ? 1 : -1));
+    const drop = new Set(forProject.slice(300).map((c) => c.id));
+    if (drop.size) db.coverage = db.coverage.filter((c) => !drop.has(c.id));
+    info.lastScanAt = new Date().toISOString();
+    info.scanError = null;
+    if (added) markChanged();
+    save();
+    return { added, found: found.length };
+  } catch (err) {
+    info.scanError = String(err.message || err);
+    save();
+    return { added: 0, error: info.scanError };
+  }
+}
+
+async function scanAllCoverage() {
+  for (const name of db.settings.projects) {
+    if (db.projectInfo[name]?.scan) await scanProject(name);
+  }
+}
+
 // ------------------------------------------------------------------ Outlook (Microsoft 365)
 
 const FLAG_SYNC_EVERY = 5 * 60 * 1000;
@@ -816,6 +961,8 @@ server.listen(PORT, HOST, () => {
   setInterval(() => runBackup(), BACKUP_CHECK);
   setInterval(() => syncFlagged().catch(() => {}), FLAG_SYNC_EVERY);
   setTimeout(() => syncFlagged().catch(() => {}), 5000);
+  setInterval(() => scanAllCoverage().catch(() => {}), COVERAGE_EVERY);
+  setTimeout(() => scanAllCoverage().catch(() => {}), 30000);
   backupDirty = true; // one backup shortly after starting
   backupTimer = setTimeout(() => runBackup(), BACKUP_DELAY);
   if (db.sync.queue.length) scheduleFlush(2000);

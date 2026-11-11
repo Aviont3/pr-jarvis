@@ -217,6 +217,12 @@ export function morningBrief(state, now = new Date()) {
     }
   }
 
+  const newCov = Object.entries(state.coverageSummary || {}).filter(([, v]) => v.new);
+  if (newCov.length) {
+    speech.push(`New coverage to review: ${newCov.map(([p, v]) => `${v.new} ${v.new === 1 ? 'article' : 'articles'} about ${displayProject(p)}`).join(', ')}.`);
+    sections.push({ heading: '📰 New coverage', items: newCov.flatMap(([p, v]) => v.latestNew.map((c) => `${displayProject(p)} · ${c.outlet || 'News'}: ${c.title}`)) });
+  }
+
   const todaysMeetings = meetingsOn(state.events, todayIso);
   if (todaysMeetings.length) {
     const first = todaysMeetings[0];
@@ -462,4 +468,88 @@ const list_ = (a) => (a.length > 1 ? `${a.slice(0, -1).join(', ')} and ${a[a.len
 export function answerEmail(state, { important = false } = {}) {
   const e = emailSummary(state.inbox?.messages || [], { importantOnly: important });
   return { title: important ? 'Important emails' : 'New emails', speech: e.speech, sections: e.items.length ? [{ heading: `${e.count} unread`, items: e.items }] : [] };
+}
+
+// ------------------------------------------------------------------ project agenda
+
+/**
+ * A ready-to-send agenda for one project, from work logged since the last agenda was sent,
+ * coverage found in that time, open to-dos and upcoming meetings.
+ * Returns { subject, body, since }.
+ */
+export function buildAgenda(state, project, now = new Date(), { coverage = [], meetingDate = '' } = {}) {
+  const info = state.projectInfo?.[project] || {};
+  const name = displayProject(project);
+  const sinceIso = info.agendaLastSent ? info.agendaLastSent.slice(0, 10) : isoDate(addDays(now, -7));
+  const when = meetingDate || isoDate(now);
+  const sender = state.settings?.userName || '';
+
+  const work = state.entries
+    .filter((e) => e.project === project && e.date >= sinceIso)
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
+  const hours = sum(work, (e) => e.hours);
+  const done = state.todos.filter((t) => t.project === project && t.done && t.doneAt && t.doneAt.slice(0, 10) >= sinceIso);
+  const open = state.todos.filter((t) => t.project === project && !t.done).sort(sortTodos);
+  const press = coverage
+    .filter((c) => c.project === project && c.status === 'kept' && (c.publishedAt || c.foundAt || '').slice(0, 10) >= sinceIso) // only articles you kept
+    .sort((a, b) => ((a.publishedAt || '') < (b.publishedAt || '') ? -1 : 1));
+
+  const L = [];
+  L.push(`Hi all,`);
+  L.push('');
+  L.push(`Here's the agenda for our ${name} check-in on ${fmtDate(when, true)}.`);
+  L.push('');
+  let n = 1;
+  L.push(`${n++}. Updates since ${fmtDate(sinceIso)}`);
+  if (work.length) {
+    // one line per piece of work (same description on several days is shown once)
+    const seen = new Set();
+    for (const e of work) {
+      const text = e.workDone || e.task;
+      if (seen.has(text.toLowerCase())) continue;
+      seen.add(text.toLowerCase());
+      L.push(`   • ${text}`);
+    }
+  }
+  for (const t of done) L.push(`   • Done: ${t.text.replace(/^✉️\s*/, '')}`);
+  if (!work.length && !done.length) L.push('   • ');
+  L.push('');
+  if (press.length) {
+    L.push(`${n++}. Coverage`);
+    for (const c of press) L.push(`   • ${c.outlet ? `${c.outlet}: ` : ''}“${c.title}”${c.publishedAt ? ` (${fmtDate(c.publishedAt.slice(0, 10))})` : ''}${c.url ? `\n     ${c.url}` : ''}`);
+    L.push('');
+  }
+  L.push(`${n++}. Open items & next steps`);
+  if (open.length) {
+    for (const t of open.slice(0, 15)) {
+      L.push(`   • ${t.text.replace(/^✉️\s*/, '')}${t.due ? ` (due ${fmtDate(t.due)})` : ''}${t.priority === 'high' ? ' [urgent]' : ''}`);
+    }
+  } else L.push('   • ');
+  L.push('');
+  L.push(`${n++}. Questions & discussion`);
+  L.push('   • ');
+  L.push('');
+  L.push('Thanks,');
+  if (sender) L.push(sender);
+
+  return {
+    subject: `${name} · Status & agenda · ${fmtDate(when)}`,
+    body: L.join('\n'),
+    since: sinceIso,
+    stats: { entries: work.length, hours, done: done.length, open: open.length, coverage: press.length },
+  };
+}
+
+/** Copy-ready coverage report (kept articles), newest first. */
+export function coverageReport(project, items) {
+  const kept = items.filter((c) => c.project === project && c.status === 'kept')
+    .sort((a, b) => ((b.publishedAt || '') > (a.publishedAt || '') ? 1 : -1));
+  const L = [`${displayProject(project)} · Coverage report`, `${kept.length} ${kept.length === 1 ? 'article' : 'articles'}`, ''];
+  for (const c of kept) {
+    L.push(`• ${c.publishedAt ? `${fmtDate(c.publishedAt.slice(0, 10), true)} · ` : ''}${c.outlet || 'Unknown outlet'}`);
+    L.push(`  “${c.title}”`);
+    if (c.url) L.push(`  ${c.url}`);
+    L.push('');
+  }
+  return L.join('\n').trim();
 }

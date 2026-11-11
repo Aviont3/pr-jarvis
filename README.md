@@ -76,11 +76,19 @@ Or tap the flower 🌼 and just talk, in your own words:
 | “What did I do on October 19th?” / “Pull up last Tuesday” | shows everything from that day, with a button to open it in My Work |
 | “Yesterday I spent 2 hours on the Acme release” | logs work for a past day |
 | “Change that to 45 minutes” / “Delete my last entry” / “Undo that” | fixes the last thing you logged |
+| “Open the Acme project” / “Prepare the Acme agenda” | opens the project / its agenda |
+| “Any new coverage?” / “Scan coverage for Nike” | new articles about your clients |
 | “Weekly report” | writes a report you can copy into an email |
 | “Good morning” / “Wrap up my day” | your daily plan / end-of-day summary |
 
 **The other pages:**
 - **📒 My Work:** everything you've logged. Click ✏️ to change or 🗑️ to delete any entry, from any day (a deleted entry can be brought back with **Undo**). To see one day, choose **Show → 📅 A specific day…** and pick a date (◀ ▶ step a day at a time), or click any date in the list. **📋 Copy summary** copies that day's work, and **⬇️ Download** opens it in Excel or Numbers.
+- **🌷 Projects:** one page per project or client, with tabs:
+  - **Overview:** hours this week and month, recent work, what's next, new coverage and notes.
+  - **Work** and **To-dos:** everything for that project, with edit, delete and add.
+  - **Agenda:** a ready-to-send agenda built from your work since the last agenda, coverage you kept, finished and open to-dos. Edit it, then **📋 Copy**, **✉️ Open in my email app** or **🌐 Outlook on the web**. **✅ Mark as sent** files it under *Sent agendas*, and the next one starts from that date.
+  - **Coverage:** Jarvis searches the news (Google News) for the client's name and your search words every 6 hours, or when you click **🔎 Scan now**. Choose words to leave out and, optionally, which publications to watch. **⭐ Keep** the real hits and **✕** the rest. Kept articles go into the agenda and a **copy-ready coverage report**. Print or paywalled pieces can be added by hand.
+  - Click a project name in My Work to jump to its page. You can rename a project, and its work, to-dos and coverage move with it.
 - **✅ To-Dos:** your full list. Tick the circle when something's done. Click a to-do's **📅 date** to change when it's due (or say “move … to Friday”), and its **🌷 project** to file it under a project (or say “put … under Acme”). Use the **Show:** buttons to see one project's to-dos; new to-dos added there go into that project. Click **⚑ Normal / 🔥 Urgent / 🐢 Low** to change how urgent a to-do is (or say “make … urgent”). The **Due:** buttons show what's overdue, due today, tomorrow, in the next 7 or 30 days, or has no date, and **🔥 Urgent only** narrows it to urgent to-dos. Upcoming to-dos are grouped by date. You can also ask “what's due this week?” or “what's urgent?”. Each to-do shows when it was **added**, and finished ones when they were **completed**. Deleted to-dos go to **🗑️ Deleted** with their **deletion date**, and you can **Restore** them. The same dates appear in the Google Sheet's To-Do tab.
 - **📊 Insights:** charts of your time and a ready-to-send report.
 - **⚙️ Settings:** your name, projects, Google connection and voice. Changes save automatically.
@@ -116,6 +124,8 @@ npm test     # unit tests
 No dependencies; plain Node.js and browser JavaScript.
 - `install.sh` / `uninstall.sh`: Mac installer (private Node.js, a LaunchAgent so Jarvis runs at login, an AppleScript app launcher)
 - `server.js`: local API, JSON storage, Google Sheets sync queue, calendar proxy, self-update
+- `coverage.js`: news coverage search (Google News RSS), parsing and relevance filtering
+- `public/js/projects.js`: the Projects page (overview, work, to-dos, agenda, coverage)
 - `outlook.js`: Microsoft 365 sign-in (PKCE), Outlook calendar, flagged emails → to-dos, unread emails (read-only)
 - `public/js/parser.js`: rule-based command understanding
 - `public/js/jarvis.js`: conversation flow
