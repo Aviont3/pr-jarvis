@@ -138,11 +138,19 @@ export function initProjects(ctx) {
         <div class="panel"><div class="panel-head"><h2>📰 New coverage</h2><button class="link" data-proj-tab-go="coverage">See all →</button></div>
           <ul class="cov-mini">${x.cov.latestNew.length ? x.cov.latestNew.map((c) => `<li><b>${h(c.outlet || 'News')}</b> ${h(c.title)}</li>`).join('') : `<li class="empty">${info(name).scan ? 'No new articles since you last looked.' : 'Coverage scanning is off. Turn it on in the Coverage tab.'}</li>`}</ul></div>
         <div class="panel"><div class="panel-head"><h2>🗒️ Notes</h2></div>
-          <textarea id="proj-notes" rows="6" placeholder="Key contacts, messaging, embargo dates… anything to remember about this project.">${h(info(name).notes || '')}</textarea></div>
+          <textarea id="proj-notes" rows="6" placeholder="Key contacts, messaging, embargo dates… anything to remember about this project.">${h(info(name).notes || '')}</textarea>
+          <label class="proj-slack">💬 Slack channel for this project <span class="muted">(optional; otherwise your main Slack channel)</span>
+            <input id="proj-slack" value="${h(info(name).slackWebhook || '')}" placeholder="https://hooks.slack.com/services/…"></label></div>
       </div>`;
     $('#ov-log', el).onclick = () => openEntry({ project: name });
     el.querySelectorAll('[data-proj-tab-go]').forEach((b) => { b.onclick = () => { tab = b.dataset.projTabGo; renderProject(); }; });
     $('#proj-notes', el).oninput = (ev) => { clearTimeout(saveTimer); saveTimer = setTimeout(() => patchProject(name, { notes: ev.target.value }), 700); };
+    $('#proj-slack', el).onchange = async (ev) => {
+      const v = ev.target.value.trim();
+      if (v && !/^https:\/\/hooks\.slack\.com\//.test(v)) { toast('That isn’t a Slack link. It starts with https://hooks.slack.com/'); return; }
+      await patchProject(name, { slackWebhook: v });
+      toast(v ? '💬 This project will post to its own Slack channel' : 'This project will use your main Slack channel');
+    };
   }
 
   // ---- Work
@@ -206,6 +214,7 @@ export function initProjects(ctx) {
             <button class="btn ghost" id="ag-copy">📋 Copy</button>
             <button class="btn ghost" id="ag-mail">✉️ Open in my email app</button>
             <button class="btn ghost" id="ag-owa">🌐 Outlook on the web</button>
+            ${getState().slack?.connected ? '<button class="btn ghost" id="ag-slack">💬 Post to Slack</button>' : ''}
             <span class="spacer"></span>
             <button class="btn primary" id="ag-sent">✅ Mark as sent</button>
           </div>
@@ -241,6 +250,8 @@ export function initProjects(ctx) {
       const v = val();
       window.open(`https://outlook.office.com/mail/deeplink/compose?to=${encodeURIComponent(to())}&subject=${encodeURIComponent(v.subject)}&body=${encodeURIComponent(v.body)}`, '_blank', 'noopener');
     };
+    const slackBtn = $('#ag-slack', el);
+    if (slackBtn) slackBtn.onclick = () => ctx.postToSlack({ title: `📋 ${val().subject}`, text: val().body, project: name });
     $('#ag-sent', el).onclick = async () => {
       await api('POST', `projects/${encodeURIComponent(name)}/agenda-sent`, val());
       celebrate($('#ag-sent', el));
@@ -262,7 +273,7 @@ export function initProjects(ctx) {
       <div class="proj-grid coverage-grid">
         <div class="panel">
           <div class="panel-head"><h2>📰 Coverage</h2>
-            <div class="row"><button class="btn ghost small" id="cv-report">📋 Copy coverage report</button><button class="btn primary small" id="cv-scan">🔎 Scan now</button></div></div>
+            <div class="row">${getState().slack?.connected ? '<button class="btn ghost small" id="cv-slack">💬 Share to Slack</button>' : ''}<button class="btn ghost small" id="cv-report">📋 Copy coverage report</button><button class="btn primary small" id="cv-scan">🔎 Scan now</button></div></div>
           <p class="muted cv-status">${i.scan
             ? `${i.lastScanAt ? `Last checked ${new Date(i.lastScanAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}. ` : ''}Jarvis checks the news every 6 hours.`
             : 'Scanning is off for this project. Turn it on at the right, or click Scan now.'}${i.scanError ? ` <span class="bad">⚠️ ${h(i.scanError)}</span>` : ''}</p>
@@ -334,6 +345,15 @@ export function initProjects(ctx) {
         if (r.added) celebrate();
       } catch (err) { toast(`❌ ${err.message}`); await loadCoverage(name); }
       if (current === name && tab === 'coverage') renderProject();
+    };
+    const cvSlack = $('#cv-slack', el);
+    if (cvSlack) cvSlack.onclick = () => {
+      const kept = items.filter((c) => c.status === 'kept');
+      if (!kept.length) { toast('Keep some articles with ⭐ first'); return; }
+      const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const lines = kept.sort((a, b) => ((b.publishedAt || '') > (a.publishedAt || '') ? 1 : -1))
+        .map((c) => `• ${c.outlet ? `*${esc(c.outlet)}*: ` : ''}${c.url ? `<${c.url}|${esc(c.title)}>` : esc(c.title)}${c.publishedAt ? ` (${fmtDate(c.publishedAt.slice(0, 10))})` : ''}`);
+      ctx.postToSlack({ raw: true, project: name, text: `📰 *${esc(displayProject(name))} · Coverage report* (${kept.length})\n${lines.join('\n')}` });
     };
     $('#cv-report', el).onclick = () => {
       const kept = items.filter((c) => c.status === 'kept').length;

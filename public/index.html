@@ -196,6 +196,7 @@
           </div></div>
           <pre class="report" id="report-text"></pre>
           <button class="btn primary" id="report-copy">📋 Copy report</button>
+          <button class="btn ghost slack-only" id="report-slack" hidden>💬 Post to Slack</button>
         </div>
       </div>
     </section>
@@ -214,6 +215,24 @@
           <p class="muted">Jarvis listens for these names when you talk. One word is enough, so “Acme” finds “Acme Corp Rebrand”.</p>
           <div class="chip-editor" id="project-editor"></div>
           <input type="hidden" name="projects">
+        </div>
+
+        <div class="panel slack-panel">
+          <h2>💬 Slack</h2>
+          <div id="slack-status" class="google-status"></div>
+          <label>Slack channel link <span class="muted">(an “Incoming Webhook”)</span>
+            <input name="slackWebhook" placeholder="https://hooks.slack.com/services/…"></label>
+          <div class="row">
+            <button type="button" class="btn ghost" id="slack-howto">How do I get a link?</button>
+            <button type="button" class="btn ghost" id="slack-test">Send a test message</button>
+            <span class="muted" id="slack-msg"></span>
+          </div>
+          <div id="slack-options">
+            <label class="check"><input type="checkbox" name="slackCoverageAlerts"> 📰 Post new coverage when Jarvis finds it</label>
+            <label class="check"><input type="checkbox" name="slackDailyWrap"> 🌙 Post my end-of-day wrap-up (when my workday ends)</label>
+            <label class="check"><input type="checkbox" name="slackWeekly"> 📄 Post my weekly report on Fridays</label>
+            <p class="muted">Projects can post to their own channel: add a link on the project's Overview tab.</p>
+          </div>
         </div>
 
         <div class="panel outlook-panel">

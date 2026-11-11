@@ -6,6 +6,7 @@ import { initProjects } from './projects.js';
 import {
   stats, todoBuckets, sortTodos, buildReport, toCsv, displayProject, filterEntries, morningBrief, wrapUp,
   meetingsOn, isMeetingLogged, meetingToEntry, unloggedMeetings, fmtTime, meetingHours,
+  buildAgenda, coverageReport,
 } from './insights.js';
 import {
   isoDate, fmtHours, fmtNum, fmtDate, fmtClock, escapeHtml as h, periodRange, sum, parseIso, addDays,
@@ -42,6 +43,23 @@ const actions = {
   stopTimer: async (note) => (await api('POST', 'timer/stop', { note })).item,
   cancelTimer: async () => api('POST', 'timer/cancel'),
   scanCoverage: async (project) => api('POST', `projects/${encodeURIComponent(project)}/scan`),
+  // Used by Jarvis for "post … to Slack"; returns a description of what was posted.
+  slackShare: async ({ kind, project }) => {
+    const send = async (payload) => { const r = await fetch('/api/slack/post', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Slack error'); };
+    const plain = (res) => [res.speech, ...(res.sections || []).flatMap((x) => (x.items?.length ? ['', x.heading, ...x.items.map((i) => `• ${i}`)] : []))].join('\n');
+    if (kind === 'wrapup') { await send({ title: `🌙 End of day${state.settings.userName ? ` · ${state.settings.userName}` : ''}`, text: plain(wrapUp(full())) }); return 'your end-of-day wrap-up'; }
+    if (kind === 'report') { const r = buildReport(state, { period: 'this week', project }); await send({ title: `📄 ${r.title}`, text: r.text.split('\n').slice(1).join('\n').trim(), project }); return `the weekly report${project ? ` for ${displayProject(project)}` : ''}`; }
+    const items = (await (await fetch(`/api/coverage?project=${encodeURIComponent(project)}`)).json()).items || [];
+    if (kind === 'agenda') {
+      const draft = state.projectInfo?.[project]?.agenda || buildAgenda(state, project, new Date(), { coverage: items });
+      await send({ title: `📋 ${draft.subject}`, text: draft.body, project });
+      return `the ${displayProject(project)} agenda`;
+    }
+    const kept = items.filter((c) => c.status === 'kept');
+    if (!kept.length) throw new Error(`there's no kept coverage for ${displayProject(project)} yet`);
+    await send({ title: `📰 ${displayProject(project)} · Coverage report`, text: coverageReport(project, items).split('\n').slice(1).join('\n').trim(), project });
+    return `the ${displayProject(project)} coverage report (${kept.length} ${kept.length === 1 ? 'article' : 'articles'})`;
+  },
 };
 
 // Calendar events live alongside the stored state (fetched from Google, not saved locally).
@@ -269,6 +287,7 @@ function renderAll() {
   renderGoogleStatus();
   renderBackups();
   renderOutlook();
+  renderSlack();
   renderInbox();
   renderHello();
   renderTimer();
@@ -1025,10 +1044,11 @@ function renderSettings() {
   renderGoogleStatus();
   f.sheetLink.value = s.sheetLink || '';
   f.msClientId.value = s.msClientId || '';
+  f.slackWebhook.value = s.slackWebhook || '';
   f.msTenant.value = s.msTenant || 'organizations';
   f.keywords.value = keywordsToText(s.categories || [], s.keywords || {});
   f.defaultCategory.innerHTML = categoryOptions(s.defaultCategory);
-  for (const k of ['speakReplies', 'autoBrief', 'notesToTodos', 'autoSaveVoiceLogs', 'calendarEnabled', 'calendarAll', 'meetingPrompts', 'driveBackup', 'outlookCalendar', 'outlookFlagged', 'outlookMail']) f[k].checked = !!s[k];
+  for (const k of ['speakReplies', 'autoBrief', 'notesToTodos', 'autoSaveVoiceLogs', 'calendarEnabled', 'calendarAll', 'meetingPrompts', 'driveBackup', 'outlookCalendar', 'outlookFlagged', 'outlookMail', 'slackCoverageAlerts', 'slackDailyWrap', 'slackWeekly']) f[k].checked = !!s[k];
   f.meetingCategory.innerHTML = categoryOptions(s.meetingCategory).replace('<option value="">(none)</option>', '');
   f.checkInMinutes.value = String(s.checkInMinutes || 0);
   f.workStart.value = s.workStart || '09:00';
@@ -1043,7 +1063,7 @@ let saveTimer = null;
 const settingsForm = $('#settings-form');
 settingsForm.addEventListener('change', (ev) => { if (ev.target.id !== 'project-add') saveSettings(); });
 settingsForm.addEventListener('input', (ev) => {
-  if (['userName', 'keywords', 'sheetUrl', 'sheetLink', 'msClientId'].includes(ev.target.name)) {
+  if (['userName', 'keywords', 'sheetUrl', 'sheetLink', 'msClientId', 'slackWebhook'].includes(ev.target.name)) {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(saveSettings, 800);
   }
@@ -1066,6 +1086,8 @@ async function saveSettings() {
     driveBackup: f.driveBackup.checked,
     outlookCalendar: f.outlookCalendar.checked, outlookFlagged: f.outlookFlagged.checked, outlookMail: f.outlookMail.checked,
     msClientId: f.msClientId.value.trim(), msTenant: f.msTenant.value,
+    slackWebhook: f.slackWebhook.value.trim(),
+    slackCoverageAlerts: f.slackCoverageAlerts.checked, slackDailyWrap: f.slackDailyWrap.checked, slackWeekly: f.slackWeekly.checked,
     voiceName: f.voiceName.value, checkInMinutes: Number(f.checkInMinutes.value),
     workStart: f.workStart.value, workEnd: f.workEnd.value, sheetUrl: f.sheetUrl.value.trim(),
   };
@@ -1545,6 +1567,95 @@ $('#help-google').onclick = () => { helpDlg.close(); openGoogleGuide(); };
 $('#google-connect').onclick = () => openGoogleGuide();
 $('#rerun-welcome').onclick = () => openWelcome();
 
+// ---- Slack
+
+/** Post to Slack (the project's own channel if it has one). Returns true when sent. */
+async function postToSlack({ title = 'From Jarvis', text, project = '', raw = false }) {
+  try {
+    await api('POST', 'slack/post', { title, text, project, raw });
+    toast('💬 Posted to Slack');
+    return true;
+  } catch (err) {
+    toast(`❌ ${err.message}`);
+    return false;
+  }
+}
+
+function renderSlack() {
+  const el = $('#slack-status');
+  if (!el) return;
+  const sl = state.slack || {};
+  $('#slack-options').hidden = !sl.connected;
+  $$('.slack-only').forEach((b) => { b.hidden = !sl.connected; });
+  if (!sl.connected) {
+    el.className = 'google-status off';
+    el.innerHTML = '<b>Not connected yet.</b> Paste a Slack channel link below and Jarvis can post agendas, coverage and reports there.';
+  } else if (sl.error) {
+    el.className = 'google-status err';
+    el.innerHTML = `<b>⚠️ Slack:</b> ${h(sl.error)}`;
+  } else {
+    el.className = 'google-status on';
+    el.innerHTML = `<b>✅ Connected.</b>${sl.lastPostAt ? ` Last posted ${new Date(sl.lastPostAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.` : ''} Jarvis can post to your channel, but can't read your Slack.`;
+  }
+}
+
+$('#slack-test').onclick = async () => {
+  const msg = $('#slack-msg');
+  const webhook = settingsForm.slackWebhook.value.trim();
+  if (!webhook) { msg.textContent = 'Paste your Slack link first.'; return; }
+  msg.textContent = 'Sending…';
+  try {
+    const r = await (await fetch('/api/slack/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ webhook }) })).json();
+    if (r.error) throw new Error(r.error);
+    msg.textContent = r.message;
+    await saveSettings();
+    celebrate($('#slack-test'));
+  } catch (err) { msg.textContent = `❌ ${err.message}`; }
+};
+$('#report-slack').onclick = () => postToSlack({ title: `📄 ${$('#report-text').textContent.split('\n')[0]}`, text: $('#report-text').textContent.split('\n').slice(1).join('\n').trim(), project: $('#report-project').value });
+
+$('#slack-howto').onclick = () => runGuide([
+  {
+    emoji: '💬', title: 'Get a Slack channel link',
+    html: `<p class="lead">Jarvis posts to Slack through a private link for one channel (Slack calls it an “Incoming Webhook”). It takes about 3 minutes.</p>
+           <p class="muted">At some companies a Slack admin has to approve new apps. If Slack says so, ask them to approve “Jarvis”.</p>`,
+    noBack: true,
+  },
+  {
+    emoji: '🧩', title: 'Make a small Slack app',
+    html: `<ol class="click-steps">
+      <li>Open <a href="https://api.slack.com/apps?new_app=1" target="_blank" rel="noopener"><b>api.slack.com/apps</b></a> and sign in to your work Slack.</li>
+      <li>Click ${ui('Create New App', 'blue')} → ${ui('From scratch')}.</li>
+      <li>Name it <b>Jarvis</b>, choose your workspace, and click ${ui('Create App', 'blue')}.</li></ol>`,
+  },
+  {
+    emoji: '🔗', title: 'Turn on the channel link',
+    html: `<ol class="click-steps">
+      <li>On the left, click ${ui('Incoming Webhooks')} and switch it ${ui('On', 'hl')}.</li>
+      <li>Scroll down and click ${ui('Add New Webhook to Workspace', 'blue')} (on newer Slack: ${ui('Add New Webhook')}).</li>
+      <li>Pick the channel Jarvis should post to (for example <b>#pr-team</b> or a direct message to yourself) and click ${ui('Allow', 'blue')}.</li>
+      <li>Click ${ui('Copy')} next to the new <b>Webhook URL</b>.</li></ol>`,
+  },
+  {
+    emoji: '✅', title: 'Paste it in Jarvis',
+    html: `<input class="big-input" id="slack-url" placeholder="https://hooks.slack.com/services/…" value="${h(state.settings.slackWebhook || '')}">
+           <div class="check-list" id="slack-check"></div>`,
+    nextLabel: 'Check it',
+    onNext: async (body) => {
+      const url = $('#slack-url', body).value.trim();
+      const out = $('#slack-check', body);
+      out.innerHTML = '<p>⏳ Sending a test message…</p>';
+      const r = await (await fetch('/api/slack/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ webhook: url }) })).json();
+      if (r.error) { out.innerHTML = `<p class="bad">❌ ${h(r.error)}</p>`; return false; }
+      await api('PATCH', 'settings', { slackWebhook: url });
+      out.innerHTML = '<p>✅ Connected! Check your Slack channel for a hello from Jarvis.</p>';
+      celebrate(out);
+      await new Promise((res) => setTimeout(res, 1200));
+      return true;
+    },
+  },
+], () => { renderAll(); renderSettings(); });
+
 // ---- Outlook (Microsoft 365)
 
 function renderOutlook() {
@@ -2006,7 +2117,7 @@ async function rhythmTick() {
 // ------------------------------------------------------------------ projects page
 
 const projectsPage = initProjects({
-  getState: () => state, api, actions, toast, celebrate, openEntry, todoLi, rowActions, parseQuickTodo, show,
+  getState: () => state, api, actions, toast, celebrate, openEntry, todoLi, rowActions, parseQuickTodo, show, postToSlack,
 });
 document.addEventListener('click', (ev) => {
   const b = ev.target.closest('[data-open-project]');

@@ -333,6 +333,14 @@ export function parseCommand(input, ctx = {}) {
 
   if (/\b(wrap (it |things )?up|wrap ?up|end of (the )?day|end my day|eod|good ?night|day summary|daily summary|how did i do today|close out (my|the) day)\b/.test(t)) return out('wrapup');
 
+  // Slack: "post my wrap-up to Slack", "send the weekly report to Slack", "share the Acme agenda on Slack"
+  if (/\bslack\b/.test(t) && /^(?:post|send|share|put|drop|push)\b/.test(t)) {
+    const pm = matchProject(text, projects);
+    const kind = /\bagenda\b/.test(t) ? 'agenda' : /\b(coverage|clips|press)\b/.test(t) ? 'coverage'
+      : /\b(wrap|end of (the )?day|my day|today)\b/.test(t) ? 'wrapup' : /\b(report|week|weekly|recap)\b/.test(t) ? 'report' : 'wrapup';
+    return out('slack_post', { kind, project: pm?.project || '' });
+  }
+
   // Projects: "open the Acme project", "prepare the Acme agenda", "any new coverage for Acme?", "scan coverage for Nike"
   if (!/^(?:log|logged|i spent|spent|record)\b/.test(t) && !parseDuration(text)) {
     if (/\b(coverage|press hits|clips|press mentions|news mentions)\b/.test(t) && /^(?:any|scan|check|find|search|show|what|did|look|get|pull|new|open)\b|\b(new coverage|coverage for|coverage about|coverage on)\b/.test(t)) {

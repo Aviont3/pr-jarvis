@@ -20,6 +20,7 @@ export const HELP = {
     { heading: 'Timer', items: ['"Start working on Acme press release"', '"Stop" / "Done"', '"What am I working on?"', '"Cancel timer"'] },
     { heading: 'To-dos', items: ['"Add to-do: follow up with Axios Friday"', '"Remind me to send the recap tomorrow, urgent"', '"What\'s on my list?"', '"Check off follow up with Axios"', '"Move follow up with Axios to Friday"', '"Put the venue under Nike"', '"Make the venue urgent"', '"What\'s on my list for Acme?"', '"What\'s due this week?"', '"What\'s urgent?"'] },
     { heading: 'Questions & reports', items: ['"How many hours on Acme this month?"', '"What did I do yesterday?"', '"What did I do on October 19th?"', '"Weekly report" / "Report for Nike last week"'] },
+    { heading: 'Slack', items: ['"Post my wrap-up to Slack"', '"Send the weekly report to Slack"', '"Share the Acme agenda on Slack"', '"Share the Acme coverage on Slack"'] },
     { heading: 'Projects & coverage', items: ['"Open the Acme project"', '"Prepare the Acme agenda"', '"Any new coverage?"', '"Scan coverage for Nike"'] },
     { heading: 'Email (Outlook)', items: ['"Any new emails?"', '"Any important emails?"', '"Check my inbox"'] },
     { heading: 'Calendar', items: ['"What meetings do I have today?"', '"When\'s my next meeting?"', '"Log my meetings"', '"Log the Acme check-in meeting"'] },
@@ -190,6 +191,17 @@ export class Jarvis {
       case 'no': return say('Okay.');
 
       case 'brief': return morningBrief(state, now);
+
+      case 'slack_post': {
+        if (!state.slack?.connected) return say('Slack isn’t connected yet. In ⚙️ Settings → Slack, click “How do I get a link?”.');
+        if ((cmd.kind === 'agenda' || cmd.kind === 'coverage') && !cmd.project) return say(`Which project? Say something like “share the Acme ${cmd.kind} on Slack”.`);
+        try {
+          const what = await this.actions.slackShare(cmd);
+          return say(`Posted ${what} to Slack. 💬`);
+        } catch (err) {
+          return say(`I couldn't post to Slack: ${err.message}`);
+        }
+      }
 
       case 'project_open': {
         const name = displayProject(cmd.project);

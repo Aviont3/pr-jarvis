@@ -595,3 +595,5 @@ a.btn.primary { color: #fff; }
 .cov-settings label.check { display: flex; gap: 8px; align-items: center; }
 .proj-link { padding: 0; color: var(--text-primary); font-weight: 600; text-decoration: underline dotted var(--accent); text-underline-offset: 3px; }
 @media (max-width: 1000px) { .proj-grid, .agenda-grid, .coverage-grid { grid-template-columns: 1fr; } .proj-client { margin-left: 0; } }
+.proj-slack { display: block; margin-top: 12px; font-size: 13px; font-weight: 700; color: var(--text-secondary); }
+.proj-slack input { display: block; width: 100%; margin-top: 4px; font-weight: 400; }

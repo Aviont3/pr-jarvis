@@ -13,11 +13,13 @@
  * Version: New version → Deploy, and approve the calendar permission.
  * The web app URL stays the same. Jarvis only reads events; it never changes your calendar.
  *
+ * Projects & Coverage: Jarvis keeps a "Projects" summary tab and a "Coverage" tab up to date.
+ *
  * Backups: Jarvis also saves a copy of all your data in a "Jarvis Backups" folder
  * in your Google Drive (one file per day, the last 30 days are kept).
  */
 const TOKEN = 'PASTE_TOKEN_HERE';
-const SCRIPT_VERSION = 3; // Jarvis asks you to update the script when this is behind
+const SCRIPT_VERSION = 4; // Jarvis asks you to update the script when this is behind
 
 const LOG_SHEET = 'Daily Log';
 const TODO_SHEET = 'To-Do';
@@ -64,6 +66,9 @@ function apply_(ctx, op) {
     case 'upsertTodo': return upsert_(ctx, todoSheet_(ctx.ss), op.todo.id, todoRow_(op.todo), 'todo');
     case 'deleteTodo': return remove_(ctx, todoSheet_(ctx.ss), op.id, 'todo');
     case 'setLists': return setLists_(ctx.ss, op.projects || [], op.categories || []);
+    case 'upsertCoverage': return upsert_(ctx, coverageSheet_(ctx.ss), op.item.id, coverageRow_(op.item), 'coverage');
+    case 'deleteCoverage': return remove_(ctx, coverageSheet_(ctx.ss), op.id, 'coverage');
+    case 'projectsTable': return projectsTable_(ctx.ss, op.rows || []);
   }
 }
 
@@ -131,6 +136,64 @@ function setLists_(ss, projects, categories) {
   if (categories.length) sh.getRange(2, 2, categories.length, 1).setValues(categories.map(function (c) { return [c]; }));
 }
 
+// ---------------------------------------------------------------- Projects & Coverage tabs
+
+const COVERAGE_SHEET = 'Coverage';
+const PROJECTS_SHEET = 'Projects';
+const COVERAGE_HEADERS = ['Published', 'Project', 'Outlet', 'Headline', 'Link', 'Status', 'Found', 'Jarvis ID'];
+const PROJECTS_HEADERS = ['Project', 'Client', 'Hours this week', 'Hours this month', 'Hours all time', 'Open to-dos', 'Overdue',
+  'Coverage kept', 'New coverage', 'Last worked', 'Last agenda sent', 'Notes', 'Updated'];
+
+function headerRow_(sh, headers, color) {
+  sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold').setBackground(color).setFontColor('#ffffff');
+  sh.setFrozenRows(1);
+}
+
+function coverageSheet_(ss) {
+  let sh = ss.getSheetByName(COVERAGE_SHEET);
+  if (!sh) {
+    sh = ss.insertSheet(COVERAGE_SHEET);
+    headerRow_(sh, COVERAGE_HEADERS, '#b83b6f');
+    sh.setColumnWidth(4, 420);
+    sh.setColumnWidth(5, 260);
+    sh.hideColumns(8);
+    const rule = SpreadsheetApp.newConditionalFormatRule()
+      .whenFormulaSatisfied('=$F2="Kept"').setBackground('#e9f8ee')
+      .setRanges([sh.getRange('A2:G')]).build();
+    sh.setConditionalFormatRules([rule]);
+  }
+  return sh;
+}
+
+function coverageRow_(c) {
+  const link = c.url ? '=HYPERLINK("' + String(c.url).replace(/"/g, '""') + '","Open article")' : '';
+  return [c.publishedAt ? new Date(c.publishedAt) : '', c.project || '', c.outlet || '', c.title || '', link,
+    c.status === 'kept' ? 'Kept' : 'New', c.foundAt ? new Date(c.foundAt) : '', c.id];
+}
+
+/** The Projects tab is a summary, rewritten as a whole each time. */
+function projectsTable_(ss, rows) {
+  let sh = ss.getSheetByName(PROJECTS_SHEET);
+  if (!sh) {
+    sh = ss.insertSheet(PROJECTS_SHEET);
+    sh.setColumnWidth(1, 220);
+    sh.setColumnWidth(12, 320);
+  }
+  sh.clearContents();
+  headerRow_(sh, PROJECTS_HEADERS, '#2f8a5a');
+  if (!rows.length) return;
+  const now = new Date();
+  const values = rows.map(function (r) {
+    return [r.project, r.client || '', r.week || 0, r.month || 0, r.all || 0, r.open || 0, r.overdue || 0,
+      r.kept || 0, r.fresh || 0, toDate_(r.lastWorked), r.lastAgenda ? new Date(r.lastAgenda) : '', r.notes || '', now];
+  });
+  sh.getRange(2, 1, values.length, PROJECTS_HEADERS.length).setValues(values);
+  sh.getRange(2, 3, values.length, 3).setNumberFormat('0.00');
+  sh.getRange(2, 10, values.length, 1).setNumberFormat('ddd, mmm d, yyyy');
+  sh.getRange(2, 11, values.length, 1).setNumberFormat('mmm d, yyyy');
+  sh.getRange(2, 13, values.length, 1).setNumberFormat('mmm d, h:mm am/pm');
+}
+
 // ---------------------------------------------------------------- upsert by hidden ID column (H)
 
 function index_(ctx, sh, key) {
@@ -156,6 +219,9 @@ function upsert_(ctx, sh, id, row, key) {
   if (key === 'log') {
     sh.getRange(r, 1).setNumberFormat('ddd, mmm d, yyyy');
     sh.getRange(r, 6).setNumberFormat('0.00');
+  } else if (key === 'coverage') {
+    sh.getRange(r, 1).setNumberFormat('mmm d, yyyy');
+    sh.getRange(r, 7).setNumberFormat('mmm d, h:mm am/pm');
   } else {
     sh.getRange(r, 4).setNumberFormat('ddd, mmm d');
     sh.getRange(r, 6, 1, 2).setNumberFormat('mmm d, h:mm am/pm');

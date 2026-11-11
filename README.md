@@ -28,8 +28,18 @@ A short welcome guide asks for your name and your projects, and tests your micro
 ## Connect your Google Sheet & Calendar (optional, about 3 minutes)
 
 Click **Connect Google** at the top right (or **⚙️ Settings → Connect Google**). Jarvis walks you through it one step at a time and checks that everything works at the end. Afterwards:
-- 📗 Everything you log is saved in your Google Sheet automatically.
+- 📗 Everything you log is saved in your Google Sheet automatically: the Daily Log and To-Do tabs, a **Projects** tab (one summary row per project: client, hours this week / month / all time, open and overdue to-dos, coverage, last worked, last agenda sent, notes) and a **Coverage** tab (every article found, new or kept, with date, project, outlet, headline and link).
 - 📅 Today's meetings show on Home. When a meeting ends, Jarvis asks whether to log it.
+
+## Connect Slack
+
+Go to **⚙️ Settings → 💬 Slack → How do I get a link?** Jarvis walks you through making a Slack channel link (an “Incoming Webhook”, about 3 minutes), then sends a test message. After that:
+- **💬 Post to Slack** buttons on a project's **Agenda**, its **Coverage report**, and the **Insights** report.
+- **Automatic posts** (turn each on or off): 📰 new coverage as soon as Jarvis finds it, 🌙 your end-of-day wrap-up when your workday ends, and 📄 your weekly report on Fridays.
+- **One channel per client:** paste a different Slack link on a project's Overview tab (e.g. #acme-team), and that project's agenda, coverage and alerts go there.
+- **By voice:** *“Post my wrap-up to Slack”*, *“Send the weekly report to Slack”*, *“Share the Acme agenda on Slack”*, *“Share the Acme coverage on Slack”*.
+
+Jarvis only posts to Slack; it can't read your messages. At some companies a Slack admin has to approve new apps first.
 
 ## Connect Outlook (work email & calendar)
 
@@ -124,6 +134,7 @@ npm test     # unit tests
 No dependencies; plain Node.js and browser JavaScript.
 - `install.sh` / `uninstall.sh`: Mac installer (private Node.js, a LaunchAgent so Jarvis runs at login, an AppleScript app launcher)
 - `server.js`: local API, JSON storage, Google Sheets sync queue, calendar proxy, self-update
+- `slack.js`: posting to Slack through an Incoming Webhook
 - `coverage.js`: news coverage search (Google News RSS), parsing and relevance filtering
 - `public/js/projects.js`: the Projects page (overview, work, to-dos, agenda, coverage)
 - `outlook.js`: Microsoft 365 sign-in (PKCE), Outlook calendar, flagged emails → to-dos, unread emails (read-only)

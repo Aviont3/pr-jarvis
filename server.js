@@ -13,13 +13,15 @@ import {
   emptyOutlook, outlookStatus, loginUrl, finishLogin, explainMsError, getOutlookEvents, getFlagged, flagStatus, getInbox, graph,
 } from './outlook.js';
 import { scanNews } from './coverage.js';
-import { isoDate, roundHours } from './public/js/util.js';
+import { postToSlack, validWebhook, toSlackText, textBlock, esc as slackEsc } from './slack.js';
+import { wrapUp, buildReport, displayProject } from './public/js/insights.js';
+import { isoDate, roundHours, periodRange, inRange } from './public/js/util.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 const INSTALLED = process.env.JARVIS_INSTALLED === '1'; // set by install.sh
 const REPO_RAW = 'https://raw.githubusercontent.com/Aviont3/pr-jarvis/main';
-const SCRIPT_VERSION = 3; // must match apps-script/Code.gs
+const SCRIPT_VERSION = 4; // must match apps-script/Code.gs
 const REPO_ZIP = 'https://github.com/Aviont3/pr-jarvis/archive/refs/heads/main.zip';
 const PUBLIC = path.join(ROOT, 'public');
 const DATA_DIR = process.env.JARVIS_DATA_DIR || path.join(ROOT, 'data');
@@ -51,6 +53,11 @@ const DEFAULT_SETTINGS = () => ({
   // Outlook (Microsoft 365)
   msClientId: process.env.JARVIS_MS_CLIENT_ID || '',
   msTenant: 'organizations',
+  // Slack (posting through an Incoming Webhook)
+  slackWebhook: '',
+  slackCoverageAlerts: true,
+  slackDailyWrap: false,
+  slackWeekly: false,
   outlookCalendar: true,
   outlookFlagged: true,
   outlookMail: true,
@@ -114,6 +121,7 @@ let backupTimer = null;
 let backingUp = false;
 
 function markChanged() {
+  enqueue({ op: 'projectsTable' });
   backupDirty = true;
   clearTimeout(backupTimer);
   backupTimer = setTimeout(() => runBackup(), BACKUP_DELAY);
@@ -177,6 +185,7 @@ const publicState = () => ({
   // Meetings come from Google Calendar and/or Outlook.
   calendarActive: !!((db.settings.calendarEnabled && db.settings.sheetUrl) || (db.settings.outlookCalendar && db.outlook.refreshToken)),
   projectInfo: db.projectInfo,
+  slack: { connected: !!db.settings.slackWebhook, lastPostAt: db.meta.slackLastPostAt || null, error: db.meta.slackError || null },
   coverageSummary: coverageSummary(),
 });
 
@@ -261,6 +270,37 @@ function enqueueEverything() {
   db.sync.queue.push({ op: 'setLists' });
   for (const e of db.entries) db.sync.queue.push({ op: 'upsertEntry', id: e.id });
   for (const t of db.todos) db.sync.queue.push({ op: 'upsertTodo', id: t.id });
+  for (const c of db.coverage || []) if (c.status !== 'dismissed') db.sync.queue.push({ op: 'upsertCoverage', id: c.id });
+  db.sync.queue.push({ op: 'projectsTable' });
+}
+
+/** One summary row per project for the sheet's Projects tab. */
+function projectRows() {
+  const week = periodRange('this week');
+  const month = periodRange('this month');
+  const today = isoDate();
+  const r2 = (n) => Math.round(n * 100) / 100;
+  return db.settings.projects.map((name) => {
+    const es = db.entries.filter((e) => e.project === name);
+    const hrs = (list) => r2(list.reduce((a, e) => a + (Number(e.hours) || 0), 0));
+    const open = db.todos.filter((t) => t.project === name && !t.done && !t.deletedAt);
+    const cov = (db.coverage || []).filter((c) => c.project === name);
+    const info = db.projectInfo?.[name] || {};
+    return {
+      project: name,
+      client: info.client || '',
+      week: hrs(es.filter((e) => inRange(e.date, week))),
+      month: hrs(es.filter((e) => inRange(e.date, month))),
+      all: hrs(es),
+      open: open.length,
+      overdue: open.filter((t) => t.due && t.due < today).length,
+      kept: cov.filter((c) => c.status === 'kept').length,
+      fresh: cov.filter((c) => c.status === 'new').length,
+      lastWorked: es.reduce((m, e) => (e.date > m ? e.date : m), ''),
+      lastAgenda: info.agendaLastSent || '',
+      notes: info.notes || '',
+    };
+  });
 }
 
 // Expand queued ops (which only hold ids) into the payload the Apps Script expects.
@@ -274,6 +314,11 @@ function materialize(op) {
     return t ? { op: 'upsertTodo', todo: t } : { op: 'deleteTodo', id: op.id };
   }
   if (op.op === 'setLists') return { op: 'setLists', projects: db.settings.projects, categories: db.settings.categories };
+  if (op.op === 'upsertCoverage') {
+    const c = (db.coverage || []).find((x) => x.id === op.id);
+    return c && c.status !== 'dismissed' ? { op: 'upsertCoverage', item: c } : { op: 'deleteCoverage', id: op.id };
+  }
+  if (op.op === 'projectsTable') return { op: 'projectsTable', rows: projectRows() };
   return op;
 }
 
@@ -468,6 +513,7 @@ async function api(req, res, pathname) {
         foundAt: new Date().toISOString(), snippet: '', status: 'kept', manual: true,
       };
       db.coverage.push(item);
+      enqueue({ op: 'upsertCoverage', id: item.id });
       return ok({ item });
     }
     if (m === 'PATCH' && id) {
@@ -475,6 +521,7 @@ async function api(req, res, pathname) {
       if (!c) return send(res, 404, { error: 'Not found' });
       if (['new', 'kept', 'dismissed'].includes(body.status)) c.status = body.status;
       if (typeof body.note === 'string') c.note = body.note;
+      enqueue({ op: 'upsertCoverage', id: c.id });
       return ok({ item: c });
     }
   }
@@ -720,7 +767,7 @@ async function calendarApi(req, res) {
 
 // ------------------------------------------------------------------ projects & coverage
 
-const PROJECT_FIELDS = ['client', 'terms', 'exclude', 'outlets', 'scan', 'recipients', 'agenda', 'notes'];
+const PROJECT_FIELDS = ['client', 'terms', 'exclude', 'outlets', 'scan', 'recipients', 'agenda', 'notes', 'slackWebhook'];
 const COVERAGE_EVERY = 6 * 3600 * 1000;
 
 function projectInfo(name) {
@@ -744,7 +791,7 @@ function renameProject(from, to) {
   db.settings.projects = db.settings.projects.map((x) => (x === from ? to : x));
   for (const e of db.entries) if (e.project === from) { e.project = to; enqueue({ op: 'upsertEntry', id: e.id }); }
   for (const t of db.todos) if (t.project === from) { t.project = to; enqueue({ op: 'upsertTodo', id: t.id }); }
-  for (const c of db.coverage) if (c.project === from) c.project = to;
+  for (const c of db.coverage) if (c.project === from) { c.project = to; enqueue({ op: 'upsertCoverage', id: c.id }); }
   if (db.projectInfo[from]) { db.projectInfo[to] = db.projectInfo[from]; delete db.projectInfo[from]; }
   if (db.timer?.project === from) db.timer.project = to;
   enqueue({ op: 'setLists' });
@@ -761,9 +808,13 @@ async function scanProject(name) {
     const urls = new Set(mine.map((c) => c.url));
     const titles = new Set(mine.map((c) => titleKey(c.title)));
     let added = 0;
+    const newItems = [];
     for (const a of found) {
       if (urls.has(a.url) || titles.has(titleKey(a.title))) continue;
-      db.coverage.push({ id: uid(), project: name, ...a, foundAt: new Date().toISOString(), status: 'new' });
+      const item = { id: uid(), project: name, ...a, foundAt: new Date().toISOString(), status: 'new' };
+      db.coverage.push(item);
+      enqueue({ op: 'upsertCoverage', id: item.id });
+      newItems.push(item);
       urls.add(a.url); titles.add(titleKey(a.title));
       added += 1;
     }
@@ -771,17 +822,95 @@ async function scanProject(name) {
     const forProject = db.coverage.filter((c) => c.project === name && c.status !== 'kept')
       .sort((a, b) => ((b.publishedAt || b.foundAt) > (a.publishedAt || a.foundAt) ? 1 : -1));
     const drop = new Set(forProject.slice(300).map((c) => c.id));
-    if (drop.size) db.coverage = db.coverage.filter((c) => !drop.has(c.id));
+    if (drop.size) {
+      db.coverage = db.coverage.filter((c) => !drop.has(c.id));
+      for (const id of drop) enqueue({ op: 'upsertCoverage', id }); // removes the rows
+    }
     info.lastScanAt = new Date().toISOString();
     info.scanError = null;
-    if (added) markChanged();
+    if (added) {
+      markChanged();
+      if (db.settings.slackCoverageAlerts) {
+        const lines = newItems.slice(0, 10).map((c) => `• ${c.outlet ? `*${slackEsc(c.outlet)}*: ` : ''}${c.url ? `<${c.url}|${slackEsc(c.title)}>` : slackEsc(c.title)}`);
+        slackPost(`📰 *New coverage for ${slackEsc(displayProject(name))}* (${added} ${added === 1 ? 'article' : 'articles'})\n${lines.join('\n')}${added > 10 ? `\n…and ${added - 10} more in Jarvis` : ''}`, name).catch(() => {});
+      }
+    }
     save();
-    return { added, found: found.length };
+    return { added, found: found.length, newItems };
   } catch (err) {
     info.scanError = String(err.message || err);
     save();
     return { added: 0, error: info.scanError };
   }
+}
+
+// ------------------------------------------------------------------ Slack
+
+/** Which webhook to use: the project's own channel if it has one, else the main one. */
+const slackHookFor = (project) => (project && db.projectInfo?.[project]?.slackWebhook) || db.settings.slackWebhook;
+
+async function slackPost(text, project = '') {
+  const hook = slackHookFor(project);
+  if (!hook) throw new Error('Slack isn’t connected yet. Add a Slack link in Settings → Slack.');
+  try {
+    await postToSlack(hook, text);
+    db.meta.slackLastPostAt = new Date().toISOString();
+    db.meta.slackError = null;
+  } catch (err) {
+    db.meta.slackError = String(err.message || err);
+    throw err;
+  } finally { save(); }
+}
+
+const minutesOfDay = (hhmm) => { const [a, b] = String(hhmm || '0:0').split(':').map(Number); return a * 60 + b; };
+
+/** End-of-day wrap-up and Friday weekly report, posted once each when the workday ends. */
+async function slackSchedule() {
+  if (!db.settings.slackWebhook) return;
+  const now = new Date();
+  const weekday = now.getDay() >= 1 && now.getDay() <= 5;
+  if (!weekday || now.getHours() * 60 + now.getMinutes() < minutesOfDay(db.settings.workEnd || '18:00')) return;
+  const today = isoDate(now);
+  const who = db.settings.userName ? ` · ${slackEsc(db.settings.userName)}` : '';
+  if (db.settings.slackDailyWrap && db.meta.slackWrapDate !== today) {
+    db.meta.slackWrapDate = today;
+    const r = wrapUp({ settings: db.settings, entries: db.entries, todos: db.todos.filter((t) => !t.deletedAt), timer: db.timer }, now);
+    await slackPost(toSlackText(r, `🌙 End of day${who}`)).catch(() => {});
+  }
+  if (db.settings.slackWeekly && now.getDay() === 5 && db.meta.slackWeeklyDate !== today) {
+    db.meta.slackWeeklyDate = today;
+    const r = buildReport({ settings: db.settings, entries: db.entries, todos: db.todos.filter((t) => !t.deletedAt) }, { period: 'this week' }, now);
+    await slackPost(textBlock(`📄 ${r.title}`, r.text)).catch(() => {});
+  }
+}
+
+async function slackApi(req, res, pathname) {
+  const what = pathname.replace('/api/slack/', '');
+  if (req.method !== 'POST') return send(res, 404, { error: 'Unknown Slack route' });
+  const body = await readBody(req);
+  if (what === 'test') {
+    const hook = String(body.webhook || db.settings.slackWebhook || '').trim();
+    if (!validWebhook(hook)) return send(res, 400, { error: 'That isn’t a Slack webhook link. It should start with https://hooks.slack.com/services/' });
+    try {
+      await postToSlack(hook, `🌸 *Jarvis is connected!*${db.settings.userName ? ` ${slackEsc(db.settings.userName)} can` : ' You can'} now share agendas, coverage and reports here.`);
+      db.meta.slackError = null;
+      save();
+      return send(res, 200, { ok: true, message: '✅ Sent a test message. Check your Slack channel.' });
+    } catch (err) {
+      return send(res, 502, { error: err.message });
+    }
+  }
+  if (what === 'post') {
+    const text = String(body.text || '').trim();
+    if (!text) return send(res, 400, { error: 'Nothing to post.' });
+    try {
+      await slackPost(body.raw ? text : textBlock(String(body.title || 'From Jarvis'), text), String(body.project || ''));
+      return send(res, 200, { ok: true, state: publicState() });
+    } catch (err) {
+      return send(res, 502, { error: err.message, state: publicState() });
+    }
+  }
+  return send(res, 404, { error: 'Unknown Slack route' });
 }
 
 async function scanAllCoverage() {
@@ -946,6 +1075,7 @@ const server = http.createServer(async (req, res) => {
   try {
     if (pathname.startsWith('/api/calendar')) return await calendarApi(req, res);
     if (pathname.startsWith('/api/outlook/')) return await outlookApi(req, res, pathname);
+    if (pathname.startsWith('/api/slack/')) return await slackApi(req, res, pathname);
     if (pathname.startsWith('/api/')) return await api(req, res, pathname);
     return serveStatic(req, res, decodeURIComponent(pathname));
   } catch (err) {
@@ -962,6 +1092,7 @@ server.listen(PORT, HOST, () => {
   setInterval(() => syncFlagged().catch(() => {}), FLAG_SYNC_EVERY);
   setTimeout(() => syncFlagged().catch(() => {}), 5000);
   setInterval(() => scanAllCoverage().catch(() => {}), COVERAGE_EVERY);
+  setInterval(() => slackSchedule().catch(() => {}), 60 * 1000);
   setTimeout(() => scanAllCoverage().catch(() => {}), 30000);
   backupDirty = true; // one backup shortly after starting
   backupTimer = setTimeout(() => runBackup(), BACKUP_DELAY);
